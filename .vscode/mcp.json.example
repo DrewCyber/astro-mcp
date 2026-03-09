@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "astro": {
+      "type": "stdio",
+      "autoRestart": true,
+      "command": "/path/to/astro-mcp/.venv/bin/python",
+      "args": ["-m", "astro_mcp"],
+      "env": {
+        "EPHE_PATH": "/path/to/astro-mcp/ephe",
+        "GEOCODING_PROVIDER": "nominatim",
+        "GEOCODING_USER_AGENT": "astro-mcp/1.0",
+        "LOG_LEVEL": "WARNING"
+      }
+    }
+  }
+}
