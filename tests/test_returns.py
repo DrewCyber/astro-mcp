@@ -19,7 +19,7 @@ def test_solar_return_sun_near_natal_sun():
     """At solar return, SR Sun should be near natal Sun position."""
     from astro_mcp.tools.returns import calculate_solar_return
     from astro_mcp.tools.natal import calculate_natal_chart
-    natal = calculate_natal_chart(date=BIRTH["birth_date"], time=BIRTH["birth_time"], location=BIRTH["birth_location"])
+    natal = calculate_natal_chart(birth_date=BIRTH["birth_date"], birth_time=BIRTH["birth_time"], birth_location=BIRTH["birth_location"])
     result = calculate_solar_return(**BIRTH, year=2024)
     sr_sun = result["sr_planets"]["Su"]["deg"]
     natal_sun = natal["planets"]["Su"]["deg"]
@@ -44,7 +44,7 @@ def test_lunar_return_moon_near_natal_moon():
     """At lunar return, LR Moon should be near natal Moon position."""
     from astro_mcp.tools.returns import calculate_lunar_return
     from astro_mcp.tools.natal import calculate_natal_chart
-    natal = calculate_natal_chart(date=BIRTH["birth_date"], time=BIRTH["birth_time"], location=BIRTH["birth_location"])
+    natal = calculate_natal_chart(birth_date=BIRTH["birth_date"], birth_time=BIRTH["birth_time"], birth_location=BIRTH["birth_location"])
     result = calculate_lunar_return(**BIRTH, from_date="2024-06-01", count=1)
     lr_moon = result["returns"][0]["lr_planets"]["Mo"]["deg"]
     natal_moon = natal["planets"]["Mo"]["deg"]

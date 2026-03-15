@@ -18,9 +18,9 @@ from astro_mcp.core.models import ChartPoint
 
 
 def calculate_natal_chart(
-    date: str,
-    time: str,
-    location: str | dict,
+    birth_date: str,
+    birth_time: str,
+    birth_location: str | dict,
     house_system: str = "P",
     degree_format: str = "dms",
     include_asteroids: bool = False,
@@ -30,6 +30,9 @@ def calculate_natal_chart(
     Compute a full natal chart.
     Returns compact JSON-ready dict.
     """
+    date = birth_date
+    time = birth_time
+    location = birth_location
     # Polar latitude check — Placidus fails above 66.5°
     geo = resolve_location(location)
     if abs(geo.lat) > 66.5 and house_system == "P":

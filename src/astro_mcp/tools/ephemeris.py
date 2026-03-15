@@ -33,6 +33,7 @@ def get_ephemeris(
     date_from: str,
     date_to: str,
     step: str = "1d",
+    interval_days: int | None = None,
     output_tz: str = "UTC",
     include_speed: bool = False,
     include_retrograde: bool = True,
@@ -44,7 +45,11 @@ def get_ephemeris(
                 "message": f"Planet code '{planet}' not recognized."}
 
     pid = PLANET_IDS[planet]
-    step_jd = STEP_HOURS.get(step, 1.0)
+    # interval_days overrides step when provided
+    if interval_days is not None and interval_days > 0:
+        step_jd = float(interval_days)
+    else:
+        step_jd = STEP_HOURS.get(step, 1.0)
 
     # Validate range
     d_from = Date.fromisoformat(date_from)
@@ -85,7 +90,7 @@ def get_ephemeris(
         "planet": planet,
         "date_from": date_from,
         "date_to": date_to,
-        "step": step,
+        "step": f"{interval_days}d" if interval_days else step,
         "rows": rows,
     }
 
@@ -132,8 +137,24 @@ def find_aspect_exact_dates(
     jd_start = to_jd(f"{date_from}T00:00:00Z")
     jd_end = to_jd(f"{date_to}T00:00:00Z")
 
-    # Scan in 1-day windows looking for sign changes in (dist - asp_angle)
+    # Scan in 12-hour windows looking for aspect crossings.
+    # For conjunction (0°) and opposition (180°) the absolute angular_distance
+    # never changes sign, so we use a signed directional arc instead.
     from astro_mcp.core.ephemeris_provider import calc_planet, angular_distance
+
+    def _scan_diff(lon1: float, lon2_val: float, asp_angle: float) -> float:
+        """Signed value that crosses zero when the aspect is exact.
+        For Cnj/Opp uses directed arc; for all other aspects uses absolute distance."""
+        if asp_angle in (0.0, 180.0):
+            arc = (lon1 - lon2_val) % 360
+            diff = arc - asp_angle
+            if diff > 180:
+                diff -= 360
+            elif diff < -180:
+                diff += 360
+            return diff
+        return angular_distance(lon1, lon2_val) - asp_angle
+
     occurrences = []
     jd = jd_start
     scan_step = 0.5  # 12-hour scan steps
@@ -147,9 +168,9 @@ def find_aspect_exact_dates(
             lon2 = natal_lon2
         else:
             lon2, _ = calc_planet(jd, pid2)  # type: ignore[arg-type]
-        diff = angular_distance(lon1, lon2) - asp_angle
+        diff = _scan_diff(lon1, lon2, asp_angle)
 
-        if prev_diff is not None and prev_diff * diff < 0:
+        if prev_diff is not None and prev_diff * diff < 0 and abs(prev_diff - diff) < 270:
             # Sign change → aspect is exact somewhere in [jd - scan_step, jd]
             ex_jd = find_exact_aspect_jd(
                 pid1, pid2, asp_angle,
@@ -165,7 +186,7 @@ def find_aspect_exact_dates(
                     test_jd = ex_jd - aj * 0.5
                     tlon1, _ = calc_planet(test_jd, pid1)
                     tlon2 = natal_lon2 if natal_lon2 else calc_planet(test_jd, pid2)[0]  # type: ignore
-                    if angular_distance(tlon1, tlon2) - asp_angle > orb:
+                    if abs(_scan_diff(tlon1, tlon2, asp_angle)) > orb:
                         approach_jd = test_jd + 0.5
                         break
                 for sj in range(120):
@@ -174,7 +195,7 @@ def find_aspect_exact_dates(
                         break
                     tlon1, _ = calc_planet(test_jd, pid1)
                     tlon2 = natal_lon2 if natal_lon2 else calc_planet(test_jd, pid2)[0]  # type: ignore
-                    if angular_distance(tlon1, tlon2) - asp_angle > orb:
+                    if abs(_scan_diff(tlon1, tlon2, asp_angle)) > orb:
                         sep_jd = test_jd - 0.5
                         break
 

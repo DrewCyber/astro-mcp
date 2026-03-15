@@ -71,8 +71,8 @@ def test_einstein_asc_cancer(einstein_natal):
 def test_whole_sign_system():
     from astro_mcp.tools.natal import calculate_natal_chart
     chart = calculate_natal_chart(
-        date="1990-03-15", time="14:30",
-        location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
+        birth_date="1990-03-15", birth_time="14:30",
+        birth_location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
         house_system="W",
     )
     assert chart["meta"]["hs"] == "W"
@@ -83,8 +83,8 @@ def test_polar_location_switches_to_whole_sign():
     """Placidus fails above 66.5° — should auto-switch to Whole Sign."""
     from astro_mcp.tools.natal import calculate_natal_chart
     chart = calculate_natal_chart(
-        date="1990-06-15", time="12:00",
-        location={"lat": 70.0, "lon": 25.0, "tz": "Europe/Oslo"},
+        birth_date="1990-06-15", birth_time="12:00",
+        birth_location={"lat": 70.0, "lon": 25.0, "tz": "Europe/Oslo"},
         house_system="P",
     )
     # Should have switched to W

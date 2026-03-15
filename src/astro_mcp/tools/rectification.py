@@ -6,18 +6,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
-    ASPECT_ANGLES,
-    PLANET_IDS,
-    build_angles,
-    build_house_cusps,
     calc_all_planets,
     calc_houses,
     find_aspects,
     to_jd,
 )
-from astro_mcp.core.formatters import serialize_point
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ChartPoint
 
 
 # ---------------------------------------------------------------------------
@@ -61,17 +55,6 @@ def score_event_match(orb: float, aspect_type: str, technique: str) -> float:
     return base * orb_factor * technique_weights.get(technique, 1.0)
 
 
-def _house_cusps_dict(house_cusps_list: list[dict]) -> dict[str, float]:
-    """Map '1st_cusp' → lon, '7th_cusp' → lon etc."""
-    ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th",
-                "7th", "8th", "9th", "10th", "11th", "12th"]
-    result = {}
-    for i, hc in enumerate(house_cusps_list):
-        key = f"{ordinals[i]}_cusp"
-        result[key] = hc["lon_decimal"] if "lon_decimal" in hc else float(hc.get("cusp_deg", 0))
-        # parse cusp deg from serialised text if needed
-    return result
-
 
 def _score_candidate(
     candidate_time: str,
@@ -85,47 +68,57 @@ def _score_candidate(
     from astro_mcp.tools.natal import calculate_natal_chart
     natal = calculate_natal_chart(birth_date, candidate_time, geo, house_system, "dec")
 
-    natal_planets = {k: v["deg"] for k, v in natal["planets"].items()}
-    natal_angles = {k: v["deg"] for k, v in natal["angles"].items()}
-    natal_all = {**natal_planets, **natal_angles}
-    # house cusp map  (just use angle positions as proxy for cusp names)
-    cusp_map: dict[str, float] = {}
-    for i, hc in enumerate(natal["houses"]):
-        ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th",
-                    "7th", "8th", "9th", "10th", "11th", "12th"]
-        lon_str = hc["cusp"]  # e.g. "00°12'Can"
-        # Parse degree from serialised string - use deg key if available
-        # Approximation: house cusp degree ~ ordinal * 30 for now; detailed parsing not needed
-        cusp_map[f"{ordinals[i]}_cusp"] = natal_all.get(hc.get("sign", "Ari"), i * 30.0)
-
     correlations: list[dict] = []
     total_score = 0.0
+
+    # Pre-resolve location and build natal point map for aspect finding
+    from astro_mcp.tools.transits import _natal_to_points
+    natal_points = _natal_to_points(natal)
+    geo_resolved = resolve_location(geo)
 
     for event in events:
         event_date = event["date"]
         event_type = event.get("type", "other")
-        significators = EVENT_SIGNIFICATORS.get(event_type, [])
 
         if "transits" in techniques:
-            from astro_mcp.tools.transits import calculate_transits
-            tr = calculate_transits(natal, event_date, house_system=house_system, degree_format="dec")
-            for asp in tr.get("aspects", []):
-                corr_score = score_event_match(asp["orb"], asp["asp"], "transits")
-                if corr_score > 1:
-                    correlations.append({
-                        "event_date": event_date,
-                        "event_type": event_type,
-                        "technique": "transits",
-                        "indicators": [{"planet": asp["tp"], "asp": asp["asp"],
-                                        "point": asp["np"], "orb": asp["orb"]}],
-                        "score": round(corr_score, 2),
-                    })
-                    total_score += corr_score
+            # Compute transits directly (skip bisection overhead) for speed
+            utc_str, _ = local_to_utc(event_date, "12:00", geo_resolved.tz)
+            jd_tr = to_jd(utc_str)
+            cusps_tr, _ = calc_houses(jd_tr, geo_resolved.lat, geo_resolved.lon, house_system)
+            tr_planets = calc_all_planets(
+                jd_tr, cusps_tr,
+                include_asteroids=False, use_mean_node=True,
+                include_lilith=True, include_chiron=True,
+            )
+            raw_asps = find_aspects(
+                tr_planets, natal_points,
+                angle_orb_keys={"Asc", "MC", "Dsc", "IC"},
+            )
+            for asp in raw_asps:
+                if asp.orb <= MAX_ORB:
+                    corr_score = score_event_match(asp.orb, asp.aspect_type, "transits")
+                    if corr_score > 1:
+                        correlations.append({
+                            "event_date": event_date,
+                            "event_type": event_type,
+                            "technique": "transits",
+                            "indicators": [{"planet": asp.point1, "asp": asp.aspect_type,
+                                            "point": asp.point2, "orb": round(asp.orb, 2)}],
+                            "score": round(corr_score, 2),
+                        })
+                        total_score += corr_score
 
         if "progressions" in techniques:
             from astro_mcp.tools.progressions import calculate_secondary_progressions
-            prog = calculate_secondary_progressions(natal, progression_date=event_date,
-                                                    house_system=house_system, degree_format="dec")
+            prog = calculate_secondary_progressions(
+                birth_date=birth_date,
+                birth_time=candidate_time,
+                birth_location=geo,
+                progression_date=event_date,
+                house_system=house_system,
+                degree_format="dec",
+                max_orb=MAX_ORB,
+            )
             for asp in prog.get("prog_to_natal_aspects", []):
                 corr_score = score_event_match(asp["orb"], asp["asp"], "progressions")
                 if corr_score > 1:
@@ -137,15 +130,22 @@ def _score_candidate(
 def calculate_rectification_hints(
     birth_date: str,
     birth_location: str | dict,
-    time_from: str,
-    time_to: str,
-    events: list[dict],
+    time_from: str = "00:00",
+    time_to: str = "23:56",
+    events: list[dict] | None = None,
     time_step_min: int = 4,
     techniques: list[str] | None = None,
     top_n: int = 5,
     house_system: str = "P",
+    birth_time: str | None = None,
 ) -> dict[str, Any]:
-    """Tool 5: Rectification — score candidate birth times against life events."""
+    """Tool 5: Rectification — score candidate birth times against life events.
+
+    If birth_time is supplied, the function runs in *verification mode*:
+    scores only that single time and returns its correlations without
+    requiring a time range.
+    """
+    events = events or []
     if len([e for e in events if e.get("date_accuracy", "exact") == "exact"]) < 3:
         if len(events) < 3:
             return {"error": True, "code": "TOO_FEW_EVENTS",
@@ -153,13 +153,30 @@ def calculate_rectification_hints(
 
     techniques = techniques or ["transits", "progressions", "profections"]
 
+    # --- Verification mode: score a single pre-known birth_time ---
+    if birth_time:
+        geo = resolve_location(birth_location)
+        score, correlations = _score_candidate(
+            birth_time, birth_date, birth_location, events, house_system, techniques
+        )
+        from astro_mcp.tools.natal import calculate_natal_chart
+        c_natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, "dms")
+        return {
+            "mode": "verification",
+            "time": birth_time,
+            "score": round(score, 1),
+            "Asc": c_natal["angles"]["Asc"]["lon"],
+            "MC": c_natal["angles"]["MC"]["lon"],
+            "correlations": correlations,
+        }
+
     # Build candidate times
     fmt = "%H:%M"
     t_from = datetime.strptime(time_from, fmt)
     t_to = datetime.strptime(time_to, fmt)
-    if (t_to - t_from).total_seconds() > 6 * 3600:
+    if (t_to - t_from).total_seconds() > 24 * 3600:
         return {"error": True, "code": "RANGE_TOO_WIDE",
-                "message": "Time range > 6 hours is not supported."}
+                "message": "Time range > 24 hours is not supported."}
 
     candidates_times = []
     t = t_from

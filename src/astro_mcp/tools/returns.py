@@ -76,10 +76,14 @@ def calculate_solar_return(
     birth_location: str | dict | None = None,
     year: int = 0,
     return_location: str | dict | None = None,
+    location: str | dict | None = None,
     house_system: str = "P",
     degree_format: str = "dms",
 ) -> dict[str, Any]:
     """Tool 4: Solar return chart for a given year."""
+    # Accept 'location' as alias for 'return_location'
+    if location and not return_location:
+        return_location = location
     if not (birth_date and birth_time and birth_location):
         return {"error": True, "code": "NATAL_MISSING",
                 "message": "birth_date, birth_time and birth_location are required."}

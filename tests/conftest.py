@@ -7,16 +7,16 @@ import pytest
 
 # Known natal data: Albert Einstein, 14 Mar 1879, 11:30 LMT, Ulm, Germany
 EINSTEIN_BIRTH = {
-    "date": "1879-03-14",
-    "time": "11:30",
-    "location": {"lat": 48.4011, "lon": 9.9876, "tz": "Europe/Berlin"},
+    "birth_date": "1879-03-14",
+    "birth_time": "11:30",
+    "birth_location": {"lat": 48.4011, "lon": 9.9876, "tz": "Europe/Berlin"},
 }
 
 # Simple contemporary chart for fast testing
 MODERN_BIRTH = {
-    "date": "1990-03-15",
-    "time": "14:30",
-    "location": {"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
+    "birth_date": "1990-03-15",
+    "birth_time": "14:30",
+    "birth_location": {"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
 }
 
 

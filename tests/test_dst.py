@@ -99,9 +99,9 @@ def test_natal_meta_includes_dst_warning(tmp_path, monkeypatch):
 
     from astro_mcp.tools.natal import calculate_natal_chart
     result = calculate_natal_chart(
-        date="1986-09-28",
-        time="02:30",
-        location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
+        birth_date="1986-09-28",
+        birth_time="02:30",
+        birth_location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
         house_system="P",
     )
     assert "dst_warning" in result.get("meta", {}), (
@@ -114,9 +114,9 @@ def test_natal_meta_no_dst_warning_for_normal_time():
     """A normal birth time must not have dst_warning in meta."""
     from astro_mcp.tools.natal import calculate_natal_chart
     result = calculate_natal_chart(
-        date="1986-06-15",
-        time="14:30",
-        location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
+        birth_date="1986-06-15",
+        birth_time="14:30",
+        birth_location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
         house_system="P",
     )
     assert "dst_warning" not in result.get("meta", {}), (

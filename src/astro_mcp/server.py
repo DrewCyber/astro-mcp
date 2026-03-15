@@ -51,11 +51,11 @@ def create_server() -> Server:
                 ),
                 inputSchema={
                     "type": "object",
-                    "required": ["date", "time", "location"],
+                    "required": ["birth_date", "birth_time", "birth_location"],
                     "properties": {
-                        "date": {"type": "string", "description": "Birth date YYYY-MM-DD"},
-                        "time": {"type": "string", "description": "Birth time HH:MM or HH:MM:SS (local)"},
-                        "location": {"description": "City name or {lat, lon, tz}"},
+                        "birth_date": {"type": "string", "description": "Birth date YYYY-MM-DD"},
+                        "birth_time": {"type": "string", "description": "Birth time HH:MM or HH:MM:SS (local)"},
+                        "birth_location": {"description": "City name or {lat, lon, tz}"},
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
                         "include_asteroids": {"type": "boolean", "default": False},
@@ -122,7 +122,8 @@ def create_server() -> Server:
                         "birth_time": {"type": "string"},
                         "birth_location": {},
                         "year": {"type": "integer"},
-                        "return_location": {"description": "City or coords for relocation solar return"},
+                        "return_location": {"description": "City or coords for relocation solar return (alias: location)"},
+                        "location": {"description": "Alias for return_location"},
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
                     },
@@ -132,16 +133,18 @@ def create_server() -> Server:
                 name="calculate_rectification_hints",
                 description=(
                     "Score candidate birth times against life events. "
-                    "Provide a time range and at least 3 dated life events."
+                    "Provide a time range and at least 3 dated life events. "
+                    "Or supply birth_time to verify a specific time (verification mode)."
                 ),
                 inputSchema={
                     "type": "object",
-                    "required": ["birth_date", "birth_location", "time_from", "time_to", "events"],
+                    "required": ["birth_date", "birth_location", "events"],
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_location": {},
-                        "time_from": {"type": "string", "description": "HH:MM"},
-                        "time_to": {"type": "string", "description": "HH:MM"},
+                        "birth_time": {"type": "string", "description": "HH:MM — supply to verify a specific time instead of scanning a range"},
+                        "time_from": {"type": "string", "description": "HH:MM (default: 00:00)"},
+                        "time_to": {"type": "string", "description": "HH:MM (default: 23:56)"},
                         "events": {
                             "type": "array",
                             "items": {
@@ -266,7 +269,8 @@ def create_server() -> Server:
                 name="calculate_arabic_parts",
                 description=(
                     "Calculate Arabic (Hermetic) Parts/Lots. Supports: FortPt, SpiritPt, "
-                    "MarriagePt, DeathPt, ChildrenPt, CareerPt, TravelPt (or 'all')."
+                    "MarriagePt, DeathPt, ChildrenPt, CareerPt, TravelPt, IllnessPt, InjuryPt, "
+                    "FatherPt, MotherPt, SaturnPt (or 'all')."
                 ),
                 inputSchema={
                     "type": "object",
@@ -282,6 +286,8 @@ def create_server() -> Server:
                         },
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
+                        "include_transits_date": {"type": "string",
+                                                   "description": "YYYY-MM-DD — include transit activations of lots on this date"},
                     },
                 },
             ),
@@ -289,7 +295,7 @@ def create_server() -> Server:
                 name="get_ephemeris",
                 description=(
                     "Ephemeris table: planet positions over a date range with a given step. "
-                    "Steps: 1h, 6h, 12h, 1d, 7d, 30d."
+                    "Steps: 1h, 6h, 12h, 1d, 7d, 30d. Or use interval_days for custom step."
                 ),
                 inputSchema={
                     "type": "object",
@@ -299,6 +305,7 @@ def create_server() -> Server:
                         "date_from": {"type": "string"},
                         "date_to": {"type": "string"},
                         "step": {"type": "string", "enum": ["1h","6h","12h","1d","7d","30d"], "default": "1d"},
+                        "interval_days": {"type": "integer", "description": "Custom step in days (overrides step)"},
                         "output_tz": {"type": "string", "default": "UTC"},
                         "include_speed": {"type": "boolean", "default": False},
                         "include_retrograde": {"type": "boolean", "default": True},

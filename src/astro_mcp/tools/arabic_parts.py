@@ -18,13 +18,20 @@ from astro_mcp.tools.natal import calculate_natal_chart
 
 PART_FORMULAS: dict[str, tuple[str, str, str, str, str, str]] = {
     # code: (day_A, day_B, day_C, night_A, night_B, night_C)
-    "FortPt":   ("Asc", "Mo",        "Su",  "Asc", "Su",        "Mo"),
-    "SpiritPt": ("Asc", "Su",        "Mo",  "Asc", "Mo",        "Su"),
-    "MarriagePt":("Asc","Dsc",       "Ve",  "Asc", "Dsc",       "Ve"),
-    "DeathPt":  ("Asc", "8th_cusp",  "Mo",  "Asc", "8th_cusp",  "Sa"),
-    "ChildrenPt":("Asc","Ju",        "Sa",  "Asc", "Sa",        "Ju"),
-    "CareerPt": ("MC",  "Mo",        "Su",  "MC",  "Su",        "Mo"),
-    "TravelPt": ("Asc", "9th_cusp",  "Ju",  "Asc", "9th_cusp",  "Sa"),
+    "FortPt":    ("Asc", "Mo",       "Su",  "Asc", "Su",       "Mo"),
+    "SpiritPt":  ("Asc", "Su",       "Mo",  "Asc", "Mo",       "Su"),
+    "MarriagePt":("Asc", "Dsc",      "Ve",  "Asc", "Dsc",      "Ve"),
+    "DeathPt":   ("Asc", "8th_cusp", "Mo",  "Asc", "8th_cusp", "Sa"),
+    "ChildrenPt":("Asc", "Ju",       "Sa",  "Asc", "Sa",       "Ju"),
+    "CareerPt":  ("MC",  "Mo",       "Su",  "MC",  "Su",       "Mo"),
+    "TravelPt":  ("Asc", "9th_cusp", "Ju",  "Asc", "9th_cusp", "Sa"),
+    # Health lots
+    "IllnessPt": ("Asc", "Sa",       "Ma",  "Asc", "Ma",       "Sa"),
+    "InjuryPt":  ("Asc", "Ma",       "Sa",  "Asc", "Sa",       "Ma"),
+    # Additional classic lots
+    "FatherPt":  ("Asc", "Su",       "Sa",  "Asc", "Sa",       "Su"),
+    "MotherPt":  ("Asc", "Mo",       "Ve",  "Asc", "Ve",       "Mo"),
+    "SaturnPt":  ("Asc", "Sa",       "Su",  "Asc", "Su",       "Sa"),
 }
 
 
@@ -113,6 +120,7 @@ def calculate_arabic_parts(
     parts: list[str] | None = None,
     house_system: str = "P",
     degree_format: str = "dms",
+    include_transits_date: str | None = None,
 ) -> dict[str, Any]:
     """Tool 11: Arabic (Hermetic) Parts / Lots."""
     if not (birth_date and birth_time and birth_location):
@@ -132,7 +140,44 @@ def calculate_arabic_parts(
         parts,
     )
 
-    return {
+    out: dict[str, Any] = {
         "chart_type": chart_type,
         "parts": result_parts,
     }
+
+    if include_transits_date:
+        from astro_mcp.tools.transits import calculate_transits
+        tr = calculate_transits(
+            transit_date=include_transits_date,
+            birth_date=birth_date,
+            birth_time=birth_time,
+            birth_location=birth_location,
+            house_system=house_system,
+            degree_format=degree_format,
+            max_orb=5.0,
+        )
+        # Find transit planets near each lot
+        transit_activations: dict[str, list[dict]] = {}
+        for part_code, part_data in result_parts.items():
+            part_lon = part_data.get("deg", 0.0)
+            activations = []
+            for tp_code, tp_data in tr.get("transit_planets", {}).items():
+                tp_lon = tp_data.get("deg", 0.0)
+                from astro_mcp.core.ephemeris_provider import angular_distance
+                from astro_mcp.core.models import ASPECT_ANGLES
+                for asp_name, asp_angle in ASPECT_ANGLES.items():
+                    o = abs(angular_distance(tp_lon, part_lon) - asp_angle)
+                    if o <= 3.0:
+                        activations.append({
+                            "planet": tp_code,
+                            "asp": asp_name,
+                            "orb": round(o, 2),
+                        })
+            if activations:
+                activations.sort(key=lambda x: x["orb"])
+                transit_activations[part_code] = activations
+        if transit_activations:
+            out["transit_activations"] = transit_activations
+            out["transits_date"] = include_transits_date
+
+    return out
