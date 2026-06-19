@@ -276,6 +276,15 @@ def find_exact_aspect_jd(
     def diff_at(jd: float) -> float:
         lon1, _ = calc_planet(jd, pid1)
         lon2 = natal_lon2 if natal_lon2 is not None else calc_planet(jd, pid2)[0]  # type: ignore[arg-type]
+        # Conjunction and opposition need a directed arc so the function can
+        # cross zero (absolute distance never changes sign there).
+        if asp_angle in (0.0, 180.0):
+            diff = ((lon1 - lon2) % 360) - asp_angle
+            if diff > 180:
+                diff -= 360
+            elif diff < -180:
+                diff += 360
+            return diff
         return angular_distance(lon1, lon2) - asp_angle
 
     d_start = diff_at(jd_start)

@@ -16,6 +16,7 @@ dependencies = [
     "timezonefinder>=6.5.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
+    "requests>=2.34.2",
 ]
 
 [project.optional-dependencies]

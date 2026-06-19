@@ -49,3 +49,51 @@ def test_find_aspect_unknown_aspect():
         date_from="2024-01-01", date_to="2024-01-31",
     )
     assert result.get("error") is True
+
+
+def test_find_aspect_new_moon_conjunction_detected():
+    """Moon-Sun conjunction (new moon) should be found in Jan 2024 window."""
+    from astro_mcp.tools.ephemeris import find_aspect_exact_dates
+
+    result = find_aspect_exact_dates(
+        planet1="Mo",
+        planet2="Su",
+        aspect="Cnj",
+        date_from="2024-01-05",
+        date_to="2024-01-15",
+        orb=2.0,
+        mode="transit-to-transit",
+    )
+    assert "occurrences" in result
+    assert len(result["occurrences"]) >= 1
+
+
+def test_find_aspect_mode_requires_natal_context():
+    from astro_mcp.tools.ephemeris import find_aspect_exact_dates
+
+    result = find_aspect_exact_dates(
+        planet1="Sa",
+        planet2="Su",
+        aspect="Tri",
+        date_from="2024-01-01",
+        date_to="2024-12-31",
+        mode="transit-to-natal",
+    )
+    assert result.get("error") is True
+    assert result.get("code") == "NATAL_CONTEXT_MISSING"
+
+
+def test_ephemeris_multi_planet_and_custom_hour_step():
+    from astro_mcp.tools.ephemeris import get_ephemeris
+
+    result = get_ephemeris(
+        planet=["Mo", "Su"],
+        date_from="2024-03-01",
+        date_to="2024-03-02",
+        step="3h",
+        output_tz="UTC",
+    )
+    assert "rows_by_planet" in result
+    assert "Mo" in result["rows_by_planet"]
+    assert "Su" in result["rows_by_planet"]
+    assert len(result["rows_by_planet"]["Mo"]) >= 8

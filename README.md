@@ -110,6 +110,35 @@ src/astro_mcp/
 
 All tools return compact JSON without whitespace to minimise LLM context tokens (~75% smaller than verbose JSON). Planet codes are abbreviated (`Su`, `Mo`, `Me`, etc.), aspects use 3-letter codes (`Cnj`, `Tri`, `Squ`), and the retrograde flag (`"R":true`) is omitted when direct to save additional tokens.
 
+## Planet Codes
+
+Supported codes across tools:
+
+- `Su` Sun
+- `Mo` Moon
+- `Me` Mercury
+- `Ve` Venus
+- `Ma` Mars
+- `Ju` Jupiter
+- `Sa` Saturn
+- `Ur` Uranus
+- `Ne` Neptune
+- `Pl` Pluto
+- `Ch` Chiron
+- `Li` Black Moon Lilith (Mean Apogee)
+- `NN` North Node (True Node)
+- `SN` South Node
+
+## API Notes
+
+- `get_ephemeris` accepts either a single `planet` or a list of planets.
+- `get_ephemeris.step` supports `1h`, `2h`, `3h`, `6h`, `12h`, `1d`, `7d`, `30d`.
+- `get_ephemeris` now returns a `timezone` field and formats `dt` in `output_tz`.
+- `find_aspect_exact_dates.mode` supports:
+  - `transit-to-transit` for two moving bodies
+  - `transit-to-natal` for transit to a natal planet/angle
+  - `auto` (default) infers mode from presence of `birth_*`
+
 ## Testing
 
 ```bash

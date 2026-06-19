@@ -42,6 +42,23 @@ def create_server() -> Server:
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
+        location_schema = {
+            "oneOf": [
+                {"type": "string", "description": "City name (e.g. 'Moscow')"},
+                {
+                    "type": "object",
+                    "required": ["lat", "lon"],
+                    "properties": {
+                        "lat": {"type": "number"},
+                        "lon": {"type": "number"},
+                        "tz": {"type": "string", "description": "IANA timezone, optional"},
+                        "name": {"type": "string", "description": "Optional label"},
+                    },
+                    "additionalProperties": False,
+                },
+            ]
+        }
+
         return [
             Tool(
                 name="calculate_natal_chart",
@@ -55,7 +72,7 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string", "description": "Birth date YYYY-MM-DD"},
                         "birth_time": {"type": "string", "description": "Birth time HH:MM or HH:MM:SS (local)"},
-                        "birth_location": {"description": "City name or {lat, lon, tz}"},
+                        "birth_location": location_schema,
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
                         "include_asteroids": {"type": "boolean", "default": False},
@@ -77,8 +94,11 @@ def create_server() -> Server:
                         "transit_time": {"type": "string", "description": "Local time at transit location HH:MM (default: 12:00 local)"},
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {"description": "City name or {lat,lon,tz}"},
-                        "transit_location": {"description": "City name or {lat,lon,tz} for transit location"},
+                        "birth_location": location_schema,
+                        "transit_location": {
+                            **location_schema,
+                            "description": "Transit location; defaults to birth_location when omitted",
+                        },
                         "period_days": {"type": "integer", "minimum": 1, "maximum": 3650},
                         "orbs": {"type": "object"},
                         "fast_planets_only": {"type": "boolean", "default": False},
@@ -100,7 +120,7 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {},
+                        "birth_location": location_schema,
                         "progression_date": {"type": "string", "description": "Date YYYY-MM-DD"},
                         "include_solar_arc": {"type": "boolean", "default": False},
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
@@ -120,10 +140,16 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {},
-                        "year": {"type": "integer"},
-                        "return_location": {"description": "City or coords for relocation solar return (alias: location)"},
-                        "location": {"description": "Alias for return_location"},
+                        "birth_location": location_schema,
+                        "year": {"type": "integer", "minimum": 1},
+                        "return_location": {
+                            **location_schema,
+                            "description": "City or coords for relocation solar return (alias: location)",
+                        },
+                        "location": {
+                            **location_schema,
+                            "description": "Alias for return_location",
+                        },
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
                     },
@@ -141,7 +167,7 @@ def create_server() -> Server:
                     "required": ["birth_date", "birth_location", "events"],
                     "properties": {
                         "birth_date": {"type": "string"},
-                        "birth_location": {},
+                        "birth_location": location_schema,
                         "birth_time": {"type": "string", "description": "HH:MM — supply to verify a specific time instead of scanning a range"},
                         "time_from": {"type": "string", "description": "HH:MM (default: 00:00)"},
                         "time_to": {"type": "string", "description": "HH:MM (default: 23:56)"},
@@ -177,10 +203,10 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {},
+                        "birth_location": location_schema,
                         "from_date": {"type": "string"},
                         "count": {"type": "integer", "default": 1, "maximum": 12},
-                        "return_location": {},
+                        "return_location": location_schema,
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
                     },
@@ -198,10 +224,10 @@ def create_server() -> Server:
                     "properties": {
                         "person1_date": {"type": "string"},
                         "person1_time": {"type": "string"},
-                        "person1_location": {},
+                        "person1_location": location_schema,
                         "person2_date": {"type": "string"},
                         "person2_time": {"type": "string"},
-                        "person2_location": {},
+                        "person2_location": location_schema,
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "orbs": {"type": "object"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
@@ -220,10 +246,10 @@ def create_server() -> Server:
                     "properties": {
                         "person1_date": {"type": "string"},
                         "person1_time": {"type": "string"},
-                        "person1_location": {},
+                        "person1_location": location_schema,
                         "person2_date": {"type": "string"},
                         "person2_time": {"type": "string"},
-                        "person2_location": {},
+                        "person2_location": location_schema,
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "method": {"type": "string", "enum": ["midpoint","davison"], "default": "midpoint"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
@@ -242,7 +268,7 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {},
+                        "birth_location": location_schema,
                         "target_date": {"type": "string", "description": "YYYY-MM-DD"},
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},
                         "degree_format": {"type": "string", "enum": ["dms","dec"], "default": "dms"},
@@ -260,7 +286,7 @@ def create_server() -> Server:
                     "required": ["date", "location"],
                     "properties": {
                         "date": {"type": "string", "description": "YYYY-MM-DD"},
-                        "location": {"description": "City name or {lat, lon}"},
+                        "location": location_schema,
                         "tz_output": {"type": "string", "description": "IANA timezone for output"},
                     },
                 },
@@ -278,7 +304,7 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {},
+                        "birth_location": location_schema,
                         "parts": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -301,11 +327,17 @@ def create_server() -> Server:
                     "type": "object",
                     "required": ["planet", "date_from", "date_to"],
                     "properties": {
-                        "planet": {"type": "string"},
+                        "planet": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                            ]
+                        },
                         "date_from": {"type": "string"},
                         "date_to": {"type": "string"},
-                        "step": {"type": "string", "enum": ["1h","6h","12h","1d","7d","30d"], "default": "1d"},
+                        "step": {"type": "string", "enum": ["1h","2h","3h","6h","12h","1d","7d","30d"], "default": "1d"},
                         "interval_days": {"type": "integer", "description": "Custom step in days (overrides step)"},
+                        "interval_hours": {"type": "integer", "description": "Custom step in hours (overrides interval_days and step)"},
                         "output_tz": {"type": "string", "default": "UTC"},
                         "include_speed": {"type": "boolean", "default": False},
                         "include_retrograde": {"type": "boolean", "default": True},
@@ -331,8 +363,16 @@ def create_server() -> Server:
                         "date_to": {"type": "string"},
                         "birth_date": {"type": "string", "description": "Birth date if planet2 is a natal point"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {"description": "Birth location if planet2 is a natal point"},
+                        "birth_location": {
+                            **location_schema,
+                            "description": "Birth location if mode is transit-to-natal",
+                        },
                         "orb": {"type": "number", "default": 1.0},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["auto", "transit-to-transit", "transit-to-natal"],
+                            "default": "auto",
+                        },
                     },
                 },
             ),
@@ -348,7 +388,7 @@ def create_server() -> Server:
                     "properties": {
                         "birth_date": {"type": "string"},
                         "birth_time": {"type": "string"},
-                        "birth_location": {},
+                        "birth_location": location_schema,
                         "include_transits_date": {"type": "string",
                                                   "description": "Optional date to check transit aspects to antiscia"},
                         "house_system": {"type": "string", "enum": ["P","W","K"], "default": "P"},

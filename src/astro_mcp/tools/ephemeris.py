@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date as Date, timedelta
+from datetime import date as Date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from astro_mcp.core.ephemeris_provider import (
     ASPECT_ANGLES,
@@ -20,6 +21,8 @@ from astro_mcp.core.formatters import decimal_to_dms
 
 STEP_HOURS: dict[str, float] = {
     "1h": 1 / 24,
+    "2h": 2 / 24,
+    "3h": 3 / 24,
     "6h": 6 / 24,
     "12h": 12 / 24,
     "1d": 1.0,
@@ -28,37 +31,33 @@ STEP_HOURS: dict[str, float] = {
 }
 
 
-def get_ephemeris(
+def _resolve_step_days(step: str, interval_days: int | None, interval_hours: int | None) -> float:
+    if interval_hours is not None and interval_hours > 0:
+        return float(interval_hours) / 24.0
+    if interval_days is not None and interval_days > 0:
+        return float(interval_days)
+    return STEP_HOURS.get(step, 1.0)
+
+
+def _format_dt_for_tz(jd: float, step_jd: float, output_tz: str) -> str:
+    dt_utc = datetime.fromisoformat(jd_to_iso(jd).replace("Z", "+00:00"))
+    dt_local = dt_utc.astimezone(ZoneInfo(output_tz))
+    if step_jd >= 1:
+        return dt_local.date().isoformat()
+    return dt_local.isoformat().replace("+00:00", "Z")
+
+
+def _build_ephemeris_rows(
     planet: str,
     date_from: str,
     date_to: str,
-    step: str = "1d",
-    interval_days: int | None = None,
-    output_tz: str = "UTC",
-    include_speed: bool = False,
-    include_retrograde: bool = True,
-    degree_format: str = "dms",
-) -> dict[str, Any]:
-    """Tool 12: Ephemeris table for a planet over a date range."""
-    if planet not in PLANET_IDS:
-        return {"error": True, "code": "UNKNOWN_PLANET",
-                "message": f"Planet code '{planet}' not recognized."}
-
+    step_jd: float,
+    output_tz: str,
+    include_speed: bool,
+    include_retrograde: bool,
+    degree_format: str,
+) -> list[dict[str, Any]]:
     pid = PLANET_IDS[planet]
-    # interval_days overrides step when provided
-    if interval_days is not None and interval_days > 0:
-        step_jd = float(interval_days)
-    else:
-        step_jd = STEP_HOURS.get(step, 1.0)
-
-    # Validate range
-    d_from = Date.fromisoformat(date_from)
-    d_to = Date.fromisoformat(date_to)
-    total_days = (d_to - d_from).days
-    if total_days / step_jd > 10000:
-        return {"error": True, "code": "RANGE_TOO_LONG",
-                "message": "Requested range/step combination too large (>10,000 rows)."}
-
     jd_start = to_jd(f"{date_from}T00:00:00Z")
     jd_end = to_jd(f"{date_to}T00:00:00Z")
 
@@ -73,25 +72,87 @@ def get_ephemeris(
             lon_str = str(round(lon % 360, 2))
 
         row: dict[str, Any] = {
-            "dt": jd_to_iso(jd)[:10] if step_jd >= 1 else jd_to_iso(jd),
+            "dt": _format_dt_for_tz(jd, step_jd, output_tz),
             "lon": lon_str,
             "deg": round(lon % 360, 2),
         }
-        if include_retrograde:
-            if speed < 0:
-                row["R"] = True
+        if include_retrograde and speed < 0:
+            row["R"] = True
         if include_speed:
             row["speed"] = round(speed, 4)
 
         rows.append(row)
         jd += step_jd
+    return rows
 
-    return {
-        "planet": planet,
+
+def get_ephemeris(
+    planet: str | list[str],
+    date_from: str,
+    date_to: str,
+    step: str = "1d",
+    interval_days: int | None = None,
+    interval_hours: int | None = None,
+    output_tz: str = "UTC",
+    include_speed: bool = False,
+    include_retrograde: bool = True,
+    degree_format: str = "dms",
+) -> dict[str, Any]:
+    """Tool 12: Ephemeris table for a planet over a date range."""
+    planets = [planet] if isinstance(planet, str) else list(planet)
+    unknown = [p for p in planets if p not in PLANET_IDS]
+    if unknown:
+        return {
+            "error": True,
+            "code": "UNKNOWN_PLANET",
+            "message": f"Planet code(s) not recognized: {', '.join(unknown)}",
+        }
+
+    step_jd = _resolve_step_days(step, interval_days, interval_hours)
+
+    # Validate range
+    d_from = Date.fromisoformat(date_from)
+    d_to = Date.fromisoformat(date_to)
+    total_days = (d_to - d_from).days
+    if total_days / step_jd > 10000:
+        return {"error": True, "code": "RANGE_TOO_LONG",
+                "message": "Requested range/step combination too large (>10,000 rows)."}
+
+    try:
+        ZoneInfo(output_tz)
+    except Exception:
+        output_tz = "UTC"
+
+    base_payload = {
         "date_from": date_from,
         "date_to": date_to,
-        "step": f"{interval_days}d" if interval_days else step,
-        "rows": rows,
+        "step": f"{interval_hours}h" if interval_hours else (f"{interval_days}d" if interval_days else step),
+        "timezone": output_tz,
+    }
+
+    if len(planets) == 1:
+        p = planets[0]
+        rows = _build_ephemeris_rows(
+            p, date_from, date_to, step_jd, output_tz,
+            include_speed, include_retrograde, degree_format,
+        )
+        return {
+            **base_payload,
+            "planet": p,
+            "rows": rows,
+        }
+
+    rows_by_planet = {
+        p: _build_ephemeris_rows(
+            p, date_from, date_to, step_jd, output_tz,
+            include_speed, include_retrograde, degree_format,
+        )
+        for p in planets
+    }
+    return {
+        **base_payload,
+        "planets": planets,
+        "rows_by_planet": rows_by_planet,
     }
 
 
@@ -105,6 +166,7 @@ def find_aspect_exact_dates(
     birth_time: str | None = None,
     birth_location: str | dict | None = None,
     orb: float = 1.0,
+    mode: str = "auto",
     degree_format: str = "dms",
 ) -> dict[str, Any]:
     """Tool 13: Find exact dates of a specific aspect between two bodies."""
@@ -120,7 +182,17 @@ def find_aspect_exact_dates(
     natal_lon2: float | None = None
     pid2: int | None = None
 
-    if birth_date and birth_time and birth_location:
+    mode_resolved = mode
+    if mode_resolved == "auto":
+        mode_resolved = "transit-to-natal" if (birth_date and birth_time and birth_location) else "transit-to-transit"
+
+    if mode_resolved == "transit-to-natal":
+        if not (birth_date and birth_time and birth_location):
+            return {
+                "error": True,
+                "code": "NATAL_CONTEXT_MISSING",
+                "message": "birth_date, birth_time and birth_location are required in transit-to-natal mode.",
+            }
         from astro_mcp.tools.natal import calculate_natal_chart
         natal_data = calculate_natal_chart(birth_date, birth_time, birth_location)
         if planet2 in natal_data.get("planets", {}):
@@ -185,7 +257,7 @@ def find_aspect_exact_dates(
                 for aj in range(int((ex_jd - jd_start) * 2)):
                     test_jd = ex_jd - aj * 0.5
                     tlon1, _ = calc_planet(test_jd, pid1)
-                    tlon2 = natal_lon2 if natal_lon2 else calc_planet(test_jd, pid2)[0]  # type: ignore
+                    tlon2 = natal_lon2 if natal_lon2 is not None else calc_planet(test_jd, pid2)[0]  # type: ignore[arg-type]
                     if abs(_scan_diff(tlon1, tlon2, asp_angle)) > orb:
                         approach_jd = test_jd + 0.5
                         break
@@ -194,7 +266,7 @@ def find_aspect_exact_dates(
                     if test_jd > jd_end:
                         break
                     tlon1, _ = calc_planet(test_jd, pid1)
-                    tlon2 = natal_lon2 if natal_lon2 else calc_planet(test_jd, pid2)[0]  # type: ignore
+                    tlon2 = natal_lon2 if natal_lon2 is not None else calc_planet(test_jd, pid2)[0]  # type: ignore[arg-type]
                     if abs(_scan_diff(tlon1, tlon2, asp_angle)) > orb:
                         sep_jd = test_jd - 0.5
                         break
@@ -216,6 +288,7 @@ def find_aspect_exact_dates(
     return {
         "planet1": planet1,
         "planet2": planet2,
+        "mode": mode_resolved,
         "aspect": aspect,
         "orb_used": orb,
         "occurrences": occurrences,
