@@ -1,6 +1,5 @@
 """Tests for calculate_transits."""
 
-import pytest
 
 BIRTH = {"birth_date": "1990-03-15", "birth_time": "14:30",
           "birth_location": {"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"}}

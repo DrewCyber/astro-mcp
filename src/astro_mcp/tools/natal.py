@@ -10,66 +10,58 @@ from astro_mcp.core.ephemeris_provider import (
     calc_all_planets,
     calc_houses,
     find_aspects,
+    resolve_house_system,
     to_jd,
 )
-from astro_mcp.core.formatters import serialize_natal, strip_nulls, to_compact_json
+from astro_mcp.core.formatters import serialize_natal, strip_nulls
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ChartPoint
+from astro_mcp.core.models import ANGLE_KEYS, Aspect, NatalChart
 
 
-def calculate_natal_chart(
-    birth_date: str,
-    birth_time: str,
-    birth_location: str | dict,
-    house_system: str = "P",
-    degree_format: str = "dms",
-    include_asteroids: bool = False,
-    include_arabic_parts: bool = False,
-) -> dict[str, Any]:
-    """
-    Compute a full natal chart.
-    Returns compact JSON-ready dict.
-    """
-    date = birth_date
-    time = birth_time
-    location = birth_location
-    # Polar latitude check — Placidus fails above 66.5°
-    geo = resolve_location(location)
-    if abs(geo.lat) > 66.5 and house_system == "P":
-        house_system = "W"
-
-    # Resolve local time → UTC; detect DST edge cases
-    utc_str, dst_warning = local_to_utc(date, time, geo.tz)
-    jd = to_jd(utc_str)
-
-    # Houses & angles
-    cusps, ascmc = calc_houses(jd, geo.lat, geo.lon, house_system)
-    angles = build_angles(ascmc, cusps)
-    house_cusps = build_house_cusps(cusps)
-
-    # Planets
-    planets = calc_all_planets(jd, cusps, include_asteroids)
-
-    # Aspects (planets + angles against each other)
-    angle_keys = {"Asc", "MC", "Dsc", "IC"}
-    all_points: dict[str, ChartPoint] = {**planets, **angles}
-    raw_aspects = find_aspects(
-        all_points,
-        all_points,
-        angle_orb_keys=angle_keys,
-    )
-    # Deduplicate (A-B == B-A)
+def dedupe_aspects(raw: list[Aspect]) -> list[Aspect]:
+    """Collapse the A-B / B-A duplicates produced by scanning a set against itself."""
     seen: set[frozenset[str]] = set()
-    aspects = []
-    for asp in raw_aspects:
+    out: list[Aspect] = []
+    for asp in raw:
         key = frozenset([asp.point1, asp.point2])
         if key not in seen:
             seen.add(key)
-            aspects.append(asp)
+            out.append(asp)
+    return out
 
-    meta: dict = {
+
+def compute_natal(
+    birth_date: str,
+    birth_time: str,
+    birth_location: str | dict[str, Any],
+    house_system: str = "P",
+    include_asteroids: bool = False,
+) -> NatalChart:
+    """Compute a natal chart at full precision.
+
+    This is the internal entry point every other tool should use.  The public
+    MCP tool below is a thin serialising wrapper around it.
+    """
+    geo = resolve_location(birth_location)
+    house_system, hs_warning = resolve_house_system(house_system, geo.lat)
+
+    # Resolve local time -> UTC; detect DST edge cases
+    utc_str, dst_warning = local_to_utc(birth_date, birth_time, geo.tz)
+    jd = to_jd(utc_str)
+
+    cusps, ascmc = calc_houses(jd, geo.lat, geo.lon, house_system)
+    angles = build_angles(ascmc, cusps)
+    house_cusps = build_house_cusps(cusps)
+    planets = calc_all_planets(jd, cusps, include_asteroids=include_asteroids)
+
+    all_points = {**planets, **angles}
+    aspects = dedupe_aspects(
+        find_aspects(all_points, all_points, angle_orb_keys=set(ANGLE_KEYS))
+    )
+
+    meta: dict[str, Any] = {
         "dt": utc_str,
-        "birth_date": date,
+        "birth_date": birth_date,
         "loc": strip_nulls({
             "lat": geo.lat,
             "lon": geo.lon,
@@ -81,11 +73,49 @@ def calculate_natal_chart(
     }
     if dst_warning:
         meta["dst_warning"] = dst_warning
+    if hs_warning:
+        meta["house_system_warning"] = hs_warning
 
-    result = serialize_natal(meta, planets, angles, house_cusps, aspects, degree_format)
+    return NatalChart(
+        meta=meta,
+        planets=planets,
+        angles=angles,
+        cusps=cusps,
+        houses=house_cusps,
+        aspects=aspects,
+        geo=geo,
+        jd=jd,
+        house_system=house_system,
+        dst_warning=dst_warning,
+        house_system_warning=hs_warning,
+    )
+
+
+def calculate_natal_chart(
+    birth_date: str,
+    birth_time: str,
+    birth_location: str | dict[str, Any],
+    house_system: str = "P",
+    degree_format: str = "dms",
+    include_asteroids: bool = False,
+    include_arabic_parts: bool = False,
+) -> dict[str, Any]:
+    """
+    Compute a full natal chart.
+    Returns compact JSON-ready dict.
+    """
+    chart = compute_natal(
+        birth_date, birth_time, birth_location, house_system, include_asteroids
+    )
+
+    result = serialize_natal(
+        chart.meta, chart.planets, chart.angles, chart.houses, chart.aspects, degree_format
+    )
 
     if include_arabic_parts:
         from astro_mcp.tools.arabic_parts import _compute_parts
-        result["arabic_parts"] = _compute_parts(planets, angles, house_cusps, degree_format)
+        result["arabic_parts"] = _compute_parts(
+            chart.planets, chart.angles, chart.houses, degree_format
+        )
 
     return result

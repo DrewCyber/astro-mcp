@@ -9,10 +9,12 @@ from astro_mcp.core.ephemeris_provider import (
     calc_all_planets,
     calc_houses,
     find_aspects,
+    resolve_house_system,
     to_jd,
 )
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, GeoLocation
 
 # ---------------------------------------------------------------------------
 # Significator mapping per event type
@@ -37,6 +39,16 @@ EVENT_SIGNIFICATORS: dict[str, list[tuple[str, list[str]]]] = {
 }
 
 MAX_ORB = 8.0
+MIN_EVENTS = 3
+MAX_CANDIDATE_CHARTS = 400
+MAX_WORK_UNITS = 4_000
+
+#: Only these natal points actually move as the birth time varies.  Scoring
+#: aspects to the slow natal planets adds the *same* constant to every
+#: candidate, which flattens the ranking and makes the top score meaningless.
+#: The Moon is included because it travels ~13 deg/day; over a 24-hour search
+#: window it genuinely discriminates between candidates.
+TIME_SENSITIVE_POINTS: frozenset[str] = ANGLE_KEYS | {"Mo"}
 
 
 def score_event_match(orb: float, aspect_type: str, technique: str) -> float:
@@ -55,84 +67,99 @@ def score_event_match(orb: float, aspect_type: str, technique: str) -> float:
     return base * orb_factor * technique_weights.get(technique, 1.0)
 
 
-
 def _score_candidate(
     candidate_time: str,
     birth_date: str,
-    geo,
-    events: list[dict],
+    birth_location: str | dict[str, Any],
+    geo: GeoLocation,
+    events: list[dict[str, Any]],
     house_system: str,
     techniques: list[str],
-) -> tuple[float, list[dict]]:
-    """Build chart for candidate time, score all events."""
-    from astro_mcp.tools.natal import calculate_natal_chart
-    natal = calculate_natal_chart(birth_date, candidate_time, geo, house_system, "dec")
+) -> tuple[float, list[dict[str, Any]]]:
+    """Build the chart for one candidate time and score it against all events.
 
-    correlations: list[dict] = []
+    Only time-sensitive natal points contribute to the score; see
+    :data:`TIME_SENSITIVE_POINTS`.
+    """
+    from astro_mcp.tools.natal import compute_natal
+
+    chart = compute_natal(birth_date, candidate_time, birth_location, house_system)
+    natal_points: dict[str, ChartPoint] = {
+        code: pt for code, pt in chart.all_points.items()
+        if code in TIME_SENSITIVE_POINTS
+    }
+
+    correlations: list[dict[str, Any]] = []
     total_score = 0.0
-
-    # Pre-resolve location and build natal point map for aspect finding
-    from astro_mcp.tools.transits import _natal_to_points
-    natal_points = _natal_to_points(natal)
-    geo_resolved = resolve_location(geo)
 
     for event in events:
         event_date = event["date"]
         event_type = event.get("type", "other")
 
         if "transits" in techniques:
-            # Compute transits directly (skip bisection overhead) for speed
-            utc_str, _ = local_to_utc(event_date, "12:00", geo_resolved.tz)
+            utc_str, _ = local_to_utc(event_date, "12:00", geo.tz)
             jd_tr = to_jd(utc_str)
-            cusps_tr, _ = calc_houses(jd_tr, geo_resolved.lat, geo_resolved.lon, house_system)
+            hs, _ = resolve_house_system(house_system, geo.lat)
+            cusps_tr, _ = calc_houses(jd_tr, geo.lat, geo.lon, hs)
             tr_planets = calc_all_planets(
                 jd_tr, cusps_tr,
-                include_asteroids=False, use_mean_node=True,
+                include_asteroids=False,
                 include_lilith=True, include_chiron=True,
             )
             raw_asps = find_aspects(
                 tr_planets, natal_points,
-                angle_orb_keys={"Asc", "MC", "Dsc", "IC"},
+                angle_orb_keys=set(ANGLE_KEYS),
             )
             for asp in raw_asps:
-                if asp.orb <= MAX_ORB:
-                    corr_score = score_event_match(asp.orb, asp.aspect_type, "transits")
-                    if corr_score > 1:
-                        correlations.append({
-                            "event_date": event_date,
-                            "event_type": event_type,
-                            "technique": "transits",
-                            "indicators": [{"planet": asp.point1, "asp": asp.aspect_type,
-                                            "point": asp.point2, "orb": round(asp.orb, 2)}],
-                            "score": round(corr_score, 2),
-                        })
-                        total_score += corr_score
+                if asp.orb > MAX_ORB:
+                    continue
+                corr_score = score_event_match(asp.orb, asp.aspect_type, "transits")
+                if corr_score > 1:
+                    correlations.append({
+                        "event_date": event_date,
+                        "event_type": event_type,
+                        "technique": "transits",
+                        "indicators": [{"planet": asp.point1, "asp": asp.aspect_type,
+                                        "point": asp.point2, "orb": round(asp.orb, 2)}],
+                        "score": round(corr_score, 2),
+                    })
+                    total_score += corr_score
 
         if "progressions" in techniques:
             from astro_mcp.tools.progressions import calculate_secondary_progressions
             prog = calculate_secondary_progressions(
                 birth_date=birth_date,
                 birth_time=candidate_time,
-                birth_location=geo,
+                birth_location=birth_location,
                 progression_date=event_date,
                 house_system=house_system,
                 degree_format="dec",
                 max_orb=MAX_ORB,
             )
             for asp in prog.get("prog_to_natal_aspects", []):
+                if asp.get("p2") not in TIME_SENSITIVE_POINTS:
+                    continue
                 corr_score = score_event_match(asp["orb"], asp["asp"], "progressions")
                 if corr_score > 1:
                     total_score += corr_score
+                    correlations.append({
+                        "event_date": event_date,
+                        "event_type": event_type,
+                        "technique": "progressions",
+                        "indicators": [{"planet": asp.get("p1"), "asp": asp["asp"],
+                                        "point": asp.get("p2"), "orb": round(asp["orb"], 2)}],
+                        "score": round(corr_score, 2),
+                    })
 
     return total_score, correlations
 
 
 def calculate_rectification_hints(
     birth_date: str,
-    birth_location: str | dict,
+    birth_location: str | dict[str, Any],
     time_from: str = "00:00",
     time_to: str = "23:56",
-    events: list[dict] | None = None,
+    events: list[dict[str, Any]] | None = None,
     time_step_min: int = 4,
     techniques: list[str] | None = None,
     top_n: int = 5,
@@ -144,39 +171,71 @@ def calculate_rectification_hints(
     If birth_time is supplied, the function runs in *verification mode*:
     scores only that single time and returns its correlations without
     requiring a time range.
+
+    Scores are **relative**: they rank candidates against each other within a
+    single call and carry no absolute meaning.
     """
     events = events or []
-    if len([e for e in events if e.get("date_accuracy", "exact") == "exact"]) < 3:
-        if len(events) < 3:
-            return {"error": True, "code": "TOO_FEW_EVENTS",
-                    "message": "Provide at least 3 events with known dates."}
+    exact_events = [e for e in events if e.get("date_accuracy", "exact") == "exact"]
+    if len(exact_events) < MIN_EVENTS:
+        raise AstroError(
+            "TOO_FEW_EVENTS",
+            f"Provide at least {MIN_EVENTS} events with exactly known dates "
+            f"(got {len(exact_events)}).",
+            hint="Events with date_accuracy other than 'exact' do not count.",
+        )
 
     techniques = techniques or ["transits", "progressions", "profections"]
+    geo = resolve_location(birth_location)
 
     # --- Verification mode: score a single pre-known birth_time ---
     if birth_time:
-        geo = resolve_location(birth_location)
+        from astro_mcp.tools.natal import compute_natal
         score, correlations = _score_candidate(
-            birth_time, birth_date, birth_location, events, house_system, techniques
+            birth_time, birth_date, birth_location, geo, events, house_system, techniques
         )
-        from astro_mcp.tools.natal import calculate_natal_chart
-        c_natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, "dms")
+        chart = compute_natal(birth_date, birth_time, birth_location, house_system)
         return {
             "mode": "verification",
             "time": birth_time,
             "score": round(score, 1),
-            "Asc": c_natal["angles"]["Asc"]["lon"],
-            "MC": c_natal["angles"]["MC"]["lon"],
+            "Asc": round(chart.angles["Asc"].lon_decimal, 4),
+            "MC": round(chart.angles["MC"].lon_decimal, 4),
             "correlations": correlations,
+            "score_note": "Relative score; comparable only within one call.",
         }
 
-    # Build candidate times
+    if time_step_min < 1:
+        raise AstroError("INPUT_ERROR", "time_step_min must be at least 1 minute.")
+
     fmt = "%H:%M"
-    t_from = datetime.strptime(time_from, fmt)
-    t_to = datetime.strptime(time_to, fmt)
-    if (t_to - t_from).total_seconds() > 24 * 3600:
-        return {"error": True, "code": "RANGE_TOO_WIDE",
-                "message": "Time range > 24 hours is not supported."}
+    try:
+        t_from = datetime.strptime(time_from, fmt)
+        t_to = datetime.strptime(time_to, fmt)
+    except ValueError as exc:
+        raise AstroError("INVALID_TIME", "time_from and time_to must be HH:MM.") from exc
+
+    span_seconds = (t_to - t_from).total_seconds()
+    if span_seconds < 0:
+        raise AstroError("INVALID_TIME", "time_to must be after time_from.")
+    if span_seconds > 24 * 3600:
+        raise AstroError("RANGE_TOO_WIDE", "Time range > 24 hours is not supported.")
+
+    n_candidates = int(span_seconds // (time_step_min * 60)) + 1
+    if n_candidates > MAX_CANDIDATE_CHARTS:
+        raise AstroError(
+            "WORKLOAD_TOO_LARGE",
+            f"{n_candidates} candidate times exceeds the limit of {MAX_CANDIDATE_CHARTS}.",
+            hint="Increase time_step_min or narrow the time range.",
+        )
+    work_units = n_candidates * max(1, len(events)) * max(1, len(techniques))
+    if work_units > MAX_WORK_UNITS:
+        raise AstroError(
+            "WORKLOAD_TOO_LARGE",
+            f"This request needs about {work_units:,} chart computations, over the "
+            f"limit of {MAX_WORK_UNITS:,}.",
+            hint="Increase time_step_min, narrow the time range, or pass fewer events.",
+        )
 
     candidates_times = []
     t = t_from
@@ -184,45 +243,55 @@ def calculate_rectification_hints(
         candidates_times.append(t.strftime(fmt))
         t += timedelta(minutes=time_step_min)
 
-    geo = resolve_location(birth_location)
-    scored = []
+    from astro_mcp.tools.natal import compute_natal
+
+    scored: list[dict[str, Any]] = []
+    scores: list[float] = []
     for ctime in candidates_times:
         score, correlations = _score_candidate(
-            ctime, birth_date, birth_location, events, house_system, techniques
+            ctime, birth_date, birth_location, geo, events, house_system, techniques
         )
-        from astro_mcp.tools.natal import calculate_natal_chart
-        c_natal = calculate_natal_chart(birth_date, ctime, birth_location, house_system, "dms")
+        chart = compute_natal(birth_date, ctime, birth_location, house_system)
+        scores.append(score)
         scored.append({
             "time": ctime,
             "score": round(score, 1),
-            "Asc": c_natal["angles"]["Asc"]["lon"],
-            "MC": c_natal["angles"]["MC"]["lon"],
+            "Asc": round(chart.angles["Asc"].lon_decimal, 4),
+            "MC": round(chart.angles["MC"].lon_decimal, 4),
             "correlations": correlations[:10],
         })
 
-    scored.sort(key=lambda x: x["score"], reverse=True)
+    order = sorted(range(len(scored)), key=lambda i: scores[i], reverse=True)
+    scored = [scored[i] for i in order]
+    scores = [scores[i] for i in order]
     top = scored[:top_n]
 
-    if not top or top[0]["score"] < 30:
-        return {"error": True, "code": "NO_CANDIDATES",
-                "message": "No candidates scored > 30. Add more events."}
-
-    # Confidence
-    best = top[0]["score"]
-    second = top[1]["score"] if len(top) > 1 else 0
+    # Confidence is driven by the *separation* between the best candidate and
+    # the runner-up, relative to the spread of all scores -- an absolute score
+    # threshold is meaningless now that only time-sensitive points contribute.
+    best = scores[0] if scores else 0.0
+    second = scores[1] if len(scores) > 1 else 0.0
     gap = best - second
+    spread = best - min(scores) if scores else 0.0
+    relative_gap = gap / spread if spread > 0 else 0.0
     n_events = len(events)
-    if n_events >= 5 and gap > 15:
+
+    if n_events >= 5 and relative_gap > 0.15:
         confidence = "high"
-    elif n_events >= 3 and gap >= 8:
+    elif n_events >= MIN_EVENTS and relative_gap > 0.07:
         confidence = "medium"
     else:
         confidence = "low"
 
     return {
         "candidates": top,
-        "best_time": top[0]["time"],
+        "best_time": top[0]["time"] if top else None,
         "confidence": confidence,
-        "note": (f"Score based on {len(techniques)} techniques, {n_events} events. "
-                 f"Confidence: {confidence}"),
+        "score_note": (
+            "Scores are relative and comparable only within this call. Only "
+            "time-sensitive natal points (angles and the Moon) are scored, since "
+            "aspects to the slow planets are identical for every candidate time."
+        ),
+        "note": (f"Scored {len(scored)} candidate times using {len(techniques)} "
+                 f"technique(s) and {n_events} event(s). Confidence: {confidence}."),
     }

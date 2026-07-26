@@ -1,8 +1,6 @@
 """Tests for DST edge-case handling in local_to_utc."""
 
-import pytest
 from astro_mcp.core.geocoding import local_to_utc
-
 
 # ---------------------------------------------------------------------------
 # Normal times — no warning expected

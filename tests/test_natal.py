@@ -1,6 +1,5 @@
 """Tests for calculate_natal_chart."""
 
-import pytest
 
 
 def test_natal_structure(modern_natal):

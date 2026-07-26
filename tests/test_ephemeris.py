@@ -1,5 +1,9 @@
 """Tests for get_ephemeris and find_aspect_exact_dates."""
 
+import pytest
+
+from astro_mcp.core.errors import AstroError
+
 
 def test_ephemeris_basic():
     from astro_mcp.tools.ephemeris import get_ephemeris
@@ -22,9 +26,9 @@ def test_ephemeris_with_speed():
 
 def test_ephemeris_unknown_planet():
     from astro_mcp.tools.ephemeris import get_ephemeris
-    result = get_ephemeris(planet="XX", date_from="2024-01-01", date_to="2024-01-07")
-    assert result.get("error") is True
-    assert result["code"] == "UNKNOWN_PLANET"
+    with pytest.raises(AstroError) as exc:
+        get_ephemeris(planet="XX", date_from="2024-01-01", date_to="2024-01-07")
+    assert exc.value.code == "UNKNOWN_PLANET"
 
 
 def test_find_aspect_saturn_sun_conjunction_2024():
@@ -44,11 +48,12 @@ def test_find_aspect_saturn_sun_conjunction_2024():
 
 def test_find_aspect_unknown_aspect():
     from astro_mcp.tools.ephemeris import find_aspect_exact_dates
-    result = find_aspect_exact_dates(
-        planet1="Su", planet2="Mo", aspect="InvalidAsp",
-        date_from="2024-01-01", date_to="2024-01-31",
-    )
-    assert result.get("error") is True
+    with pytest.raises(AstroError) as exc:
+        find_aspect_exact_dates(
+            planet1="Su", planet2="Mo", aspect="InvalidAsp",
+            date_from="2024-01-01", date_to="2024-01-31",
+        )
+    assert exc.value.code == "UNKNOWN_ASPECT"
 
 
 def test_find_aspect_new_moon_conjunction_detected():
@@ -71,16 +76,16 @@ def test_find_aspect_new_moon_conjunction_detected():
 def test_find_aspect_mode_requires_natal_context():
     from astro_mcp.tools.ephemeris import find_aspect_exact_dates
 
-    result = find_aspect_exact_dates(
-        planet1="Sa",
-        planet2="Su",
-        aspect="Tri",
-        date_from="2024-01-01",
-        date_to="2024-12-31",
-        mode="transit-to-natal",
-    )
-    assert result.get("error") is True
-    assert result.get("code") == "NATAL_CONTEXT_MISSING"
+    with pytest.raises(AstroError) as exc:
+        find_aspect_exact_dates(
+            planet1="Sa",
+            planet2="Su",
+            aspect="Tri",
+            date_from="2024-01-01",
+            date_to="2024-12-31",
+            mode="transit-to-natal",
+        )
+    assert exc.value.code == "INPUT_ERROR"
 
 
 def test_ephemeris_multi_planet_and_custom_hour_step():

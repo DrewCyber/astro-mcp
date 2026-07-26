@@ -2,54 +2,72 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
     build_angles,
+    build_chart_point,
     build_house_cusps,
     calc_all_planets,
     calc_houses,
     find_aspects,
+    house_of,
     jd_to_iso,
-    to_jd,
 )
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_house, serialize_point
-from astro_mcp.core.models import ChartPoint, SIGNS
-from astro_mcp.tools.natal import calculate_natal_chart
-from astro_mcp.tools.transits import _natal_to_points
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart
+from astro_mcp.tools.natal import compute_natal, dedupe_aspects
+
+HARMONY_ASPECTS = frozenset({"Cnj", "Tri", "Sex"})
+
+# Points excluded from house-overlay reporting: the angles are properties of
+# the houses themselves, and the South Node is derived from the North Node.
+_OVERLAY_EXCLUDED = ANGLE_KEYS | {"SN"}
 
 
 def _resolve_natal(
     birth_date: str | None,
     birth_time: str | None,
-    birth_location: str | dict | None,
+    birth_location: str | dict[str, Any] | None,
     house_system: str,
-) -> dict[str, Any]:
-    if birth_date and birth_time and birth_location:
-        return calculate_natal_chart(birth_date, birth_time, birth_location, house_system, "dec")
-    raise ValueError("NATAL_MISSING: Provide birth_date, birth_time and birth_location.")
+    label: str,
+) -> NatalChart:
+    if not (birth_date and birth_time and birth_location):
+        raise AstroError(
+            "INPUT_ERROR",
+            f"{label}_date, {label}_time and {label}_location are required.",
+        )
+    return compute_natal(birth_date, birth_time, birth_location, house_system)
+
+
+def _overlay(points: dict[str, ChartPoint], cusps: list[float]) -> dict[str, int]:
+    """Which house of the *other* chart each of these points falls into."""
+    return {
+        code: house_of(pt.lon_decimal, cusps)
+        for code, pt in points.items()
+        if code not in _OVERLAY_EXCLUDED
+    }
 
 
 def calculate_synastry(
     person1_date: str | None = None,
     person1_time: str | None = None,
-    person1_location: str | dict | None = None,
+    person1_location: str | dict[str, Any] | None = None,
     person2_date: str | None = None,
     person2_time: str | None = None,
-    person2_location: str | dict | None = None,
+    person2_location: str | dict[str, Any] | None = None,
     house_system: str = "P",
     orbs: dict[str, float] | None = None,
     degree_format: str = "dms",
 ) -> dict[str, Any]:
     """Tool 7: Synastry — cross-aspects and house overlays between two charts."""
-    try:
-        n1 = _resolve_natal(person1_date, person1_time, person1_location, house_system)
-        n2 = _resolve_natal(person2_date, person2_time, person2_location, house_system)
-    except ValueError as e:
-        return {"error": True, "code": "NATAL_MISSING", "message": str(e)}
+    n1 = _resolve_natal(person1_date, person1_time, person1_location, house_system, "person1")
+    n2 = _resolve_natal(person2_date, person2_time, person2_location, house_system, "person2")
 
-    pts1 = _natal_to_points(n1)
-    pts2 = _natal_to_points(n2)
+    pts1 = n1.all_points
+    pts2 = n2.all_points
 
     # Default synastry orbs (slightly tighter)
     default_syn_orbs: dict[str, float] = {
@@ -57,11 +75,11 @@ def calculate_synastry(
     }
     used_orbs = orbs or default_syn_orbs
 
-    cross_aspects = find_aspects(pts1, pts2, custom_orbs=used_orbs,
-                                 angle_orb_keys={"Asc", "MC", "Dsc", "IC"})
+    cross_aspects = find_aspects(
+        pts1, pts2, custom_orbs=used_orbs, angle_orb_keys=set(ANGLE_KEYS)
+    )
 
-    HARMONY_ASPECTS = {"Cnj", "Tri", "Sex"}
-    aspects_out = [
+    aspects_out: list[dict[str, Any]] = [
         {
             "p1_planet": a.point1,
             "p2_planet": a.point2,
@@ -72,54 +90,35 @@ def calculate_synastry(
         for a in cross_aspects
     ]
 
-    # House overlays: where does P1's planet fall in P2's houses?
-    def house_for_lon(lon: float, houses: list[dict]) -> int:
-        cusps = [hc["cusp_dec"] if "cusp_dec" in hc else hc.get("deg_num", i * 30.0)
-                 for i, hc in enumerate(houses)]
-        # Fall back to degree math approximation using serialised cusp
-        for i, hc in enumerate(n2["houses"]):
-            next_i = (i + 1) % 12
-            cusp1 = n2["houses"][i].get("lon_dec", i * 30.0)
-            return 1  # Placeholder — actual overlay from pts2 houses
-        return 1
-
-    p1_in_p2: dict[str, int] = {}
-    for pcode, pt in pts1.items():
-        if pcode in {"Asc", "MC", "Dsc", "IC"}:
-            continue
-        # assign house from n2 house structure using longitude
-        lon = pt.lon_decimal
-        house_n = 1
-        for hi, hc in enumerate(n2["houses"]):
-            # Parse cusp longitude from house data
-            # house serialised as {"n":1,"cusp":"00°12'Can","sign":"Can"...}
-            pass  # use pts2's existing house attribute if available
-        if pcode in pts2:
-            house_n = pts2[pcode].house or 1  # approximate
-        p1_in_p2[pcode] = n1["planets"].get(pcode, {}).get("house", 1)
-
-    # Simpler and correct approach: use the house number from each chart
-    p1_in_p2 = {k: v.house or 1 for k, v in pts1.items()
-                if k not in {"Asc", "MC", "Dsc", "IC", "SN"}}
-    p2_in_p1 = {k: v.house or 1 for k, v in pts2.items()
-                if k not in {"Asc", "MC", "Dsc", "IC", "SN"}}
+    # House overlays: each person's planets located in the OTHER person's
+    # houses.  This is the whole point of the technique, so the cusps must come
+    # from the opposite chart.
+    p1_in_p2 = _overlay(n1.planets, n2.cusps)
+    p2_in_p1 = _overlay(n2.planets, n1.cusps)
 
     # Davison chart datetime (midpoint of two birth JDs)
-    jd1 = to_jd(n1["meta"]["dt"])
-    jd2 = to_jd(n2["meta"]["dt"])
-    davison_jd = (jd1 + jd2) / 2
+    davison_jd = (n1.jd + n2.jd) / 2
 
-    # Compatibility indicators
     strong_links = [
-        f"{a['p1_planet']}-{a['p2_planet']} {a['asp']}"
-        for a in aspects_out if a["harmony"] and a["orb"] < 3
+        f"{a.point1}-{a.point2} {a.aspect_type}"
+        for a in cross_aspects
+        if a.aspect_type in HARMONY_ASPECTS and a.orb < 3
     ]
     challenges = [
-        f"{a['p1_planet']}-{a['p2_planet']} {a['asp']}"
-        for a in aspects_out if not a["harmony"] and a["orb"] < 3
+        f"{a.point1}-{a.point2} {a.aspect_type}"
+        for a in cross_aspects
+        if a.aspect_type not in HARMONY_ASPECTS and a.orb < 3
     ]
-    harmony_score = round(sum(10 - a["orb"] for a in aspects_out if a["harmony"]) / max(1, len(aspects_out)) * 2, 1)
-    tension_score = round(sum(10 - a["orb"] for a in aspects_out if not a["harmony"]) / max(1, len(aspects_out)) * 2, 1)
+
+    # Tightness-weighted totals: each aspect contributes (max_orb - orb), so a
+    # partile aspect counts for much more than one at the edge of orb.  These
+    # are relative indicators for comparing charts, not absolute percentages.
+    harmony_score = round(
+        sum(8 - a.orb for a in cross_aspects if a.aspect_type in HARMONY_ASPECTS), 1
+    )
+    tension_score = round(
+        sum(8 - a.orb for a in cross_aspects if a.aspect_type not in HARMONY_ASPECTS), 1
+    )
 
     return {
         "p1_label": "Person1",
@@ -133,81 +132,85 @@ def calculate_synastry(
         "compatibility_indicators": {
             "harmony_score": harmony_score,
             "tension_score": tension_score,
+            "scale_note": "Relative tightness-weighted totals; compare across charts, not to 100.",
             "strong_links": strong_links[:5],
             "challenges": challenges[:5],
         },
     }
 
 
+def _midpoint_lon(lon1: float, lon2: float) -> float:
+    """Shorter-arc midpoint of two longitudes.
+
+    The vector mean is undefined for exactly opposed points (atan2(0, 0)); in
+    that case either midpoint is equally valid, so the one advancing from the
+    first point is chosen deterministically instead of silently collapsing to
+    0 degrees Aries.
+    """
+    r1, r2 = math.radians(lon1), math.radians(lon2)
+    avg_sin = (math.sin(r1) + math.sin(r2)) / 2
+    avg_cos = (math.cos(r1) + math.cos(r2)) / 2
+    if abs(avg_sin) < 1e-12 and abs(avg_cos) < 1e-12:
+        return (lon1 + 90.0) % 360
+    return math.degrees(math.atan2(avg_sin, avg_cos)) % 360
+
+
 def calculate_composite_chart(
     person1_date: str | None = None,
     person1_time: str | None = None,
-    person1_location: str | dict | None = None,
+    person1_location: str | dict[str, Any] | None = None,
     person2_date: str | None = None,
     person2_time: str | None = None,
-    person2_location: str | dict | None = None,
+    person2_location: str | dict[str, Any] | None = None,
     house_system: str = "P",
     method: str = "midpoint",
     degree_format: str = "dms",
 ) -> dict[str, Any]:
     """Tool 8: Composite chart via midpoints or Davison."""
-    try:
-        n1 = _resolve_natal(person1_date, person1_time, person1_location, house_system)
-        n2 = _resolve_natal(person2_date, person2_time, person2_location, house_system)
-    except ValueError as e:
-        return {"error": True, "code": "NATAL_MISSING", "message": str(e)}
+    if method not in {"midpoint", "davison"}:
+        raise AstroError("INPUT_ERROR", "method must be 'midpoint' or 'davison'.")
 
-    jd1 = to_jd(n1["meta"]["dt"])
-    jd2 = to_jd(n2["meta"]["dt"])
+    n1 = _resolve_natal(person1_date, person1_time, person1_location, house_system, "person1")
+    n2 = _resolve_natal(person2_date, person2_time, person2_location, house_system, "person2")
 
     if method == "davison":
-        # Davison: use midpoint JD and mean lat/lon
-        dav_jd = (jd1 + jd2) / 2
-        lat = (n1["meta"]["loc"]["lat"] + n2["meta"]["loc"]["lat"]) / 2
-        lon = (n1["meta"]["loc"]["lon"] + n2["meta"]["loc"]["lon"]) / 2
-        cusps, ascmc = calc_houses(dav_jd, lat, lon, house_system)
+        # Davison: a real chart cast for the midpoint in time and space.
+        dav_jd = (n1.jd + n2.jd) / 2
+        lat = (n1.geo.lat + n2.geo.lat) / 2
+        lon = (n1.geo.lon + n2.geo.lon) / 2
+        cusps, ascmc = calc_houses(dav_jd, lat, lon, n1.house_system)
         comp_planets = calc_all_planets(dav_jd, cusps, include_asteroids=False)
         comp_angles = build_angles(ascmc, cusps)
         comp_houses = build_house_cusps(cusps)
+        cusp_list = cusps
     else:
-        # Midpoint: average longitudes (handling 0°/360° wrap with vector mean)
-        import math
-        pts1 = _natal_to_points(n1)
-        pts2 = _natal_to_points(n2)
+        # Midpoint composite: every point, including the angles, is the
+        # midpoint of the corresponding pair.  Houses must then be derived from
+        # the composite MC/Asc — deriving them from a Davison chart instead
+        # (as this previously did) leaves the planets' house numbers
+        # inconsistent with the composite angles they are reported alongside.
+        comp_planets = {
+            k: build_chart_point(_midpoint_lon(pt.lon_decimal, n2.planets[k].lon_decimal), 0.0)
+            for k, pt in n1.planets.items()
+            if k in n2.planets
+        }
+        comp_asc = _midpoint_lon(n1.angles["Asc"].lon_decimal, n2.angles["Asc"].lon_decimal)
+        comp_mc = _midpoint_lon(n1.angles["MC"].lon_decimal, n2.angles["MC"].lon_decimal)
+        comp_angles = {
+            "Asc": build_chart_point(comp_asc, 0.0),
+            "MC": build_chart_point(comp_mc, 0.0),
+            "Dsc": build_chart_point((comp_asc + 180) % 360, 0.0),
+            "IC": build_chart_point((comp_mc + 180) % 360, 0.0),
+        }
+        # Equal houses from the composite Ascendant keeps the cusps consistent
+        # with the composite angles; quadrant systems are not defined for a
+        # chart that has no single time or place.
+        cusp_list = [(comp_asc + 30 * i) % 360 for i in range(12)]
+        comp_houses = build_house_cusps(cusp_list)
 
-        comp_pts: dict[str, ChartPoint] = {}
-        planet_keys = list(pts1.keys())
-        for k in planet_keys:
-            if k not in pts2:
-                continue
-            lon1 = math.radians(pts1[k].lon_decimal)
-            lon2 = math.radians(pts2[k].lon_decimal)
-            avg_sin = (math.sin(lon1) + math.sin(lon2)) / 2
-            avg_cos = (math.cos(lon1) + math.cos(lon2)) / 2
-            avg_lon = math.degrees(math.atan2(avg_sin, avg_cos)) % 360
-            from astro_mcp.core.ephemeris_provider import build_chart_point
-            comp_pts[k] = build_chart_point(avg_lon, 0.0)
-
-        # Houses from midpoint ASC/MC
-        asc_lon = comp_pts.get("Asc")
-        mc_lon = comp_pts.get("MC")
-        # fallback to averaged geodata
-        lat = (n1["meta"]["loc"]["lat"] + n2["meta"]["loc"]["lat"]) / 2
-        lon = (n1["meta"]["loc"]["lon"] + n2["meta"]["loc"]["lon"]) / 2
-        dav_jd = (jd1 + jd2) / 2
-        cusps, ascmc = calc_houses(dav_jd, lat, lon, house_system)
-
-        comp_planets = {k: v for k, v in comp_pts.items() if k not in {"Asc", "MC", "Dsc", "IC"}}
-        comp_angles = {k: v for k, v in comp_pts.items() if k in {"Asc", "MC", "Dsc", "IC"}}
-        if not comp_angles:
-            comp_angles = build_angles(ascmc, cusps)
-        comp_houses = build_house_cusps(cusps)
-
-    # Recompute house for planets based on composite cusps
-    cusp_list = [hc.lon_decimal for hc in comp_houses]
-    for k, pt in list(comp_planets.items()):
-        from astro_mcp.core.ephemeris_provider import house_of
-        comp_planets[k] = ChartPoint(
+    # Assign each composite planet to a composite house
+    comp_planets = {
+        k: ChartPoint(
             lon_decimal=pt.lon_decimal,
             sign=pt.sign,
             sign_lon=pt.sign_lon,
@@ -215,22 +218,20 @@ def calculate_composite_chart(
             retrograde=pt.retrograde,
             speed=pt.speed,
         )
+        for k, pt in comp_planets.items()
+    }
 
-    # Aspects within composite
     all_comp: dict[str, ChartPoint] = {**comp_planets, **comp_angles}
-    raw_aspects = find_aspects(all_comp, all_comp, angle_orb_keys={"Asc", "MC"})
-    seen: set[frozenset[str]] = set()
-    comp_aspects = []
-    for a in raw_aspects:
-        k = frozenset([a.point1, a.point2])
-        if k not in seen:
-            seen.add(k)
-            comp_aspects.append(a)
+    comp_aspects = dedupe_aspects(
+        find_aspects(all_comp, all_comp, angle_orb_keys={"Asc", "MC"})
+    )
 
     return {
         "method": method,
+        "house_basis": "equal-from-composite-Asc" if method == "midpoint" else n1.house_system,
         "comp_planets": {k: serialize_point(v, degree_format) for k, v in comp_planets.items()},
-        "comp_angles": {k: serialize_point(v, degree_format, include_house=False) for k, v in comp_angles.items()},
+        "comp_angles": {k: serialize_point(v, degree_format, include_house=False)
+                        for k, v in comp_angles.items()},
         "comp_houses": [serialize_house(h, degree_format) for h in comp_houses],
         "comp_aspects": [
             {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb}

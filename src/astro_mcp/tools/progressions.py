@@ -2,26 +2,27 @@
 
 from __future__ import annotations
 
-from datetime import date as Date, timedelta
+from datetime import date as Date
+from datetime import timedelta
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
     build_angles,
-    build_chart_point,
     calc_all_planets,
     calc_houses,
     find_aspects,
-    to_jd,
+    lon_to_sign_info,
 )
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ChartPoint
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint
+from astro_mcp.tools.natal import compute_natal, dedupe_aspects
 
 
 def calculate_secondary_progressions(
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
+    birth_location: str | dict[str, Any] | None = None,
     progression_date: str = "",
     include_solar_arc: bool = False,
     house_system: str = "P",
@@ -33,51 +34,46 @@ def calculate_secondary_progressions(
     Returns progressed planets, angles, and aspects to natal positions.
     """
     if not (birth_date and birth_time and birth_location):
-        return {"error": True, "code": "NATAL_MISSING",
-                "message": "birth_date, birth_time and birth_location are required."}
-    from astro_mcp.tools.natal import calculate_natal_chart
-    natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, degree_format)
+        raise AstroError(
+            "INPUT_ERROR",
+            "birth_date, birth_time and birth_location are required.",
+        )
+    if not progression_date:
+        raise AstroError("INPUT_ERROR", "progression_date is required.")
 
-    # Parse natal birth datetime
-    natal_dt_str = natal["meta"]["dt"]  # UTC ISO
-    natal_date_str = natal_dt_str[:10]
-    natal_jd = to_jd(natal_dt_str)
-    geo_data = natal["meta"]["loc"]
+    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
 
-    # Calculate age in years at progression_date
-    b_date = Date.fromisoformat(natal_date_str)
-    p_date = Date.fromisoformat(progression_date)
+    # Age is measured from the *local* birth date the caller supplied; the UTC
+    # timestamp can land on the neighbouring day for births near midnight.
+    try:
+        b_date = Date.fromisoformat(birth_date)
+        p_date = Date.fromisoformat(progression_date)
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_DATE", "birth_date and progression_date must be YYYY-MM-DD."
+        ) from exc
+
     age_days = (p_date - b_date).days
     age_years = age_days / 365.25
 
-    # Progressed day = natal_date + age_years days (day-for-a-year)
-    prog_jd = natal_jd + age_years
-    prog_date_obj = b_date + timedelta(days=age_years)
-    prog_day_str = prog_date_obj.isoformat()
+    # Day-for-a-year: advance the ephemeris one day per year of life.
+    prog_jd = chart.jd + age_years
+    prog_day_str = (b_date + timedelta(days=age_years)).isoformat()
 
-    geo_lat = geo_data["lat"]
-    geo_lon = geo_data["lon"]
-    cusps, ascmc = calc_houses(prog_jd, geo_lat, geo_lon, house_system)
+    cusps, ascmc = calc_houses(
+        prog_jd, chart.geo.lat, chart.geo.lon, chart.house_system
+    )
     prog_planets = calc_all_planets(prog_jd, cusps, include_asteroids=False)
     prog_angles = build_angles(ascmc, cusps)
 
-    # Natal points for aspect comparison
-    from astro_mcp.tools.transits import _natal_to_points
-    natal_points = _natal_to_points(natal)
+    natal_points = chart.all_points
 
-    # Prog → Natal aspects
+    # Prog -> Natal aspects
     prog_all: dict[str, ChartPoint] = {**prog_planets, **prog_angles}
-    p2n = find_aspects(prog_all, natal_points, angle_orb_keys={"Asc", "MC", "Dsc", "IC"})
+    p2n = find_aspects(prog_all, natal_points, angle_orb_keys=set(ANGLE_KEYS))
 
-    # Prog → Prog aspects
-    p2p_raw = find_aspects(prog_planets, prog_planets, angle_orb_keys=set())
-    seen: set[frozenset[str]] = set()
-    p2p = []
-    for a in p2p_raw:
-        k = frozenset([a.point1, a.point2])
-        if k not in seen:
-            seen.add(k)
-            p2p.append(a)
+    # Prog -> Prog aspects
+    p2p = dedupe_aspects(find_aspects(prog_planets, prog_planets, angle_orb_keys=set()))
 
     prog_planets_out = {k: serialize_point(v, degree_format) for k, v in prog_planets.items()}
     prog_planets_out["Asc"] = serialize_point(prog_angles["Asc"], degree_format, include_house=False)
@@ -107,16 +103,11 @@ def calculate_secondary_progressions(
     }
 
     if include_solar_arc:
-        natal_sun_lon = natal["planets"]["Su"]["deg"]
-        prog_sun_lon = prog_planets["Su"].lon_decimal
-        solar_arc = (prog_sun_lon - natal_sun_lon) % 360
+        solar_arc = (prog_planets["Su"].lon_decimal - chart.planets["Su"].lon_decimal) % 360
         sa_planets = {}
         for k, pt in natal_points.items():
             sa_lon = (pt.lon_decimal + solar_arc) % 360
-            from astro_mcp.core.models import SIGNS
-            sign_idx = int(sa_lon // 30)
-            sign = SIGNS[sign_idx]
-            sign_lon = sa_lon % 30
+            sign, sign_lon = lon_to_sign_info(sa_lon)
             sa_pt = ChartPoint(sa_lon, sign, sign_lon, None, False, 0.0)
             sa_planets[k] = serialize_point(sa_pt, degree_format, include_house=False)
         result["solar_arc"] = {"arc_deg": round(solar_arc, 2), "sa_planets": sa_planets}

@@ -1,6 +1,5 @@
 """Tests for core/formatters.py."""
 
-import pytest
 from astro_mcp.core.formatters import decimal_to_dms, dms_to_decimal, to_compact_json
 
 

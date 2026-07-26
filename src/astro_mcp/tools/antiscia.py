@@ -1,134 +1,152 @@
-"""Tool 14: calculate_antiscia."""
+"""Tool 15: calculate_antiscia."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
-    PLANET_IDS,
-    calc_all_planets,
-    calc_houses,
     angular_distance,
+    build_chart_point,
+    calc_all_planets,
     to_jd,
 )
-from astro_mcp.core.formatters import decimal_to_dms
-from astro_mcp.core.models import SIGNS, ChartPoint
-from astro_mcp.tools.natal import calculate_natal_chart
+from astro_mcp.core.errors import AstroError
+from astro_mcp.core.formatters import serialize_point
+from astro_mcp.core.models import ANGLE_KEYS
+from astro_mcp.tools.natal import compute_natal
+
+# Antiscia mirror about the 0 Cancer / 0 Capricorn (solstitial) axis.
+ANTISCIA_AXIS = 90.0
+# Contra-antiscia mirror about the 0 Aries / 0 Libra (equinoctial) axis.
+CONTRA_AXIS = 0.0
 
 
-def _antiscia_lon(lon: float) -> float:
+def antiscion(lon: float) -> float:
+    """Reflection across the solstice axis: 90 - lon (mod 360)."""
+    return (ANTISCIA_AXIS * 2 - lon) % 360
+
+
+def contra_antiscion(lon: float) -> float:
+    """Reflection across the equinox axis: 360 - lon (mod 360)."""
+    return (CONTRA_AXIS * 2 - lon) % 360
+
+
+def _transit_contacts(
+    mirrors: dict[str, dict[str, dict[str, Any]]],
+    transit_date: str,
+    orb: float,
+) -> list[dict[str, Any]]:
+    """Transiting planets conjunct the natal antiscia on a given date.
+
+    Only conjunctions are reported: an antiscion is a mirrored degree, and the
+    tradition treats contact with it as a conjunction rather than as a full
+    aspect set.
     """
-    Antiscia: reflection over the Cancer/Capricorn axis (0° Cancer = 90°).
-    Formula: antiscia = 180° - lon  (mod 360)
-    Example: 24°45' Pisces (354.75°) → antiscia = 180 - 354.75 = -174.75 → +185.25° = 5°15' Libra
-    More precisely: reflect over 90°/270° axis:
-      antiscia = (180 - lon) % 360
-    """
-    return (180.0 - lon) % 360.0
+    try:
+        jd = to_jd(f"{transit_date}T12:00:00+00:00")
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_DATE",
+            f"Could not parse include_transits_date '{transit_date}'.",
+            hint="Use YYYY-MM-DD.",
+        ) from exc
 
-
-def _contraantiscia_lon(lon: float) -> float:
-    """
-    Contra-antiscia: reflection over the Aries/Libra axis (0° Aries = 0°).
-    Formula: contraantiscia = 360° - lon  (mod 360) = -lon % 360
-    """
-    return (360.0 - lon) % 360.0
-
-
-def _lon_to_sign_dms(lon: float) -> str:
-    lon = lon % 360
-    sign_idx = int(lon // 30)
-    sign = SIGNS[sign_idx]
-    sign_lon = lon % 30
-    return decimal_to_dms(sign_lon) + sign
+    transiting = calc_all_planets(jd)
+    hits: list[dict[str, Any]] = []
+    for kind, mirror in mirrors.items():
+        for m_code, m_data in mirror.items():
+            for t_code, t_pt in transiting.items():
+                o = angular_distance(m_data["deg"], t_pt.lon_decimal)
+                if o <= orb:
+                    hits.append({
+                        "transit": t_code,
+                        "kind": kind,
+                        "contacts": m_code,
+                        "orb": round(o, 2),
+                    })
+    hits.sort(key=lambda h: float(h["orb"]))
+    return hits
 
 
 def calculate_antiscia(
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
-    include_transits_date: str | None = None,
+    birth_location: str | dict[str, Any] | None = None,
+    orb: float = 1.5,
     house_system: str = "P",
     degree_format: str = "dms",
+    include_contra: bool = True,
+    include_transits_date: str | None = None,
 ) -> dict[str, Any]:
-    """Tool 14: Antiscia and contra-antiscia for natal planets."""
+    """Tool 15: Antiscia and contra-antiscia points plus their natal contacts."""
     if not (birth_date and birth_time and birth_location):
-        return {"error": True, "code": "NATAL_MISSING",
-                "message": "birth_date, birth_time and birth_location are required."}
-    natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, degree_format)
+        raise AstroError(
+            "INPUT_ERROR",
+            "birth_date, birth_time and birth_location are required.",
+        )
+    if orb <= 0:
+        raise AstroError("INPUT_ERROR", "orb must be greater than 0.")
 
-    antiscia_map: dict[str, Any] = {}
-    points_to_check = list(natal["planets"].items()) + list(natal["angles"].items())
+    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
+    points = chart.all_points
 
-    for code, pdata in points_to_check:
-        natal_lon = pdata["deg"]
-        anti_lon = _antiscia_lon(natal_lon)
-        contra_lon = _contraantiscia_lon(natal_lon)
+    antiscia: dict[str, dict[str, Any]] = {}
+    contra: dict[str, dict[str, Any]] = {}
 
-        if degree_format == "dms":
-            natal_str = _lon_to_sign_dms(natal_lon)
-            anti_str = _lon_to_sign_dms(anti_lon)
-            contra_str = _lon_to_sign_dms(contra_lon)
-        else:
-            natal_str = str(round(natal_lon, 2))
-            anti_str = str(round(anti_lon, 2))
-            contra_str = str(round(contra_lon, 2))
+    for code, pt in points.items():
+        if code in ANGLE_KEYS:
+            continue
+        a_lon = antiscion(pt.lon_decimal)
+        antiscia[code] = serialize_point(
+            build_chart_point(a_lon, pt.speed, chart.cusps), degree_format
+        )
+        if include_contra:
+            c_lon = contra_antiscion(pt.lon_decimal)
+            contra[code] = serialize_point(
+                build_chart_point(c_lon, pt.speed, chart.cusps), degree_format
+            )
 
-        antiscia_map[code] = {
-            "natal_lon": natal_str,
-            "antiscia": anti_str,
-            "contraantiscia": contra_str,
-        }
-
-    # Mutual antiscia aspects between natal planets
-    mutual_antiscia: list[dict] = []
-    planet_keys = list(natal["planets"].keys())
-    for i, k1 in enumerate(planet_keys):
-        lon1 = natal["planets"][k1]["deg"]
-        anti1 = _antiscia_lon(lon1)
-        for k2 in planet_keys[i + 1:]:
-            lon2 = natal["planets"][k2]["deg"]
-            orb_anti = angular_distance(anti1, lon2)
-            if orb_anti <= 1.5:
-                mutual_antiscia.append({
-                    "p1": k1,
-                    "p2": k2,
-                    "type": "antiscia_cnj",
-                    "orb": round(orb_anti, 2),
-                })
-            orb_contra = angular_distance(_contraantiscia_lon(lon1), lon2)
-            if orb_contra <= 1.5:
-                mutual_antiscia.append({
-                    "p1": k1,
-                    "p2": k2,
-                    "type": "contraantiscia_cnj",
-                    "orb": round(orb_contra, 2),
-                })
-
-    # Transit antiscia aspects
-    transit_aspects: list[dict] | None = None
-    if include_transits_date:
-        jd_tr = to_jd(f"{include_transits_date}T12:00:00Z")
-        cusps, _ = calc_houses(jd_tr,
-                               natal["meta"]["loc"]["lat"],
-                               natal["meta"]["loc"]["lon"], house_system)
-        tr_planets = calc_all_planets(jd_tr, cusps, include_asteroids=False)
-        transit_aspects = []
-        for tr_code, tr_pt in tr_planets.items():
-            tr_lon = tr_pt.lon_decimal
-            for n_code, n_pdata in natal["planets"].items():
-                n_anti = _antiscia_lon(n_pdata["deg"])
-                orb_anti = angular_distance(tr_lon, n_anti)
-                if orb_anti <= 1.5:
-                    transit_aspects.append({
-                        "transit": tr_code,
-                        "natal": n_code,
-                        "type": "transit_to_antiscia",
-                        "orb": round(orb_anti, 2),
+    def _contacts(mirror: dict[str, dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+        hits: list[dict[str, Any]] = []
+        for m_code, m_data in mirror.items():
+            m_lon = m_data["deg"]
+            for n_code, n_pt in points.items():
+                if n_code == m_code:
+                    continue
+                o = angular_distance(m_lon, n_pt.lon_decimal)
+                if o <= orb:
+                    hits.append({
+                        "point": m_code,
+                        "kind": kind,
+                        "contacts": n_code,
+                        "orb": round(o, 2),
                     })
+        hits.sort(key=lambda h: float(h["orb"]))
+        return hits
 
-    return {
-        "antiscia": antiscia_map,
-        "mutual_antiscia_aspects": mutual_antiscia,
-        "transit_antiscia_aspects": transit_aspects,
+    result: dict[str, Any] = {
+        "orb_used": orb,
+        "antiscia": antiscia,
+        "contacts": _contacts(antiscia, "antiscion"),
     }
+    if include_contra:
+        result["contra_antiscia"] = contra
+        result["contacts"].extend(_contacts(contra, "contra-antiscion"))
+        result["contacts"].sort(key=lambda h: float(h["orb"]))
+
+    if include_transits_date:
+        mirrors = {"antiscion": antiscia}
+        if include_contra:
+            mirrors["contra-antiscion"] = contra
+        hits = _transit_contacts(mirrors, include_transits_date, orb)
+        if hits:
+            result["transit_contacts"] = hits
+        result["transits_date"] = include_transits_date
+        result["transits_note"] = (
+            "Transit positions taken at 12:00 UTC on transits_date. Antiscion "
+            "contacts are conjunctions to the mirrored degree by tradition."
+        )
+
+    if chart.house_system_warning:
+        result["house_system_warning"] = chart.house_system_warning
+    return result

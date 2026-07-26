@@ -2,57 +2,145 @@
 
 from __future__ import annotations
 
-from datetime import date as Date, timedelta
+from datetime import date as Date
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
-    ASPECT_ANGLES,
-    PLANET_IDS,
-    angular_distance,
-    build_chart_point,
+    aspect_delta,
     calc_all_planets,
     calc_houses,
     calc_planet,
     find_aspects,
     find_exact_aspect_jd,
     jd_to_iso,
+    resolve_house_system,
     to_jd,
 )
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point, strip_nulls
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import DEFAULT_ORBS, Aspect, ChartPoint
-from astro_mcp.tools.natal import calculate_natal_chart
+from astro_mcp.core.models import ANGLE_KEYS, ASPECT_ANGLES, PLANET_IDS, ChartPoint
+from astro_mcp.tools.natal import compute_natal
+
+# Upper bound on a scanned window.  The day-by-day scan below evaluates every
+# transiting body against every natal point for every aspect, so the cost is
+# linear in the number of days; 366 keeps the worst case comfortably
+# sub-second while still covering the "next year" question users actually ask.
+MAX_PERIOD_DAYS = 366
+
+FAST_KEYS = frozenset({"Mo", "Me", "Ve", "Ma", "Su"})
+
+# How far either side of the queried moment to look for the exact hit of an
+# aspect that is currently within orb.  Slow outer-planet aspects can stay in
+# orb for months, so a symmetric window is used rather than the previous
+# lopsided -10/+30 days.
+EXACT_SEARCH_DAYS = 200
 
 
-def _natal_to_points(natal: dict) -> dict[str, ChartPoint]:
-    """Extract ChartPoint map from a full natal chart dict (by deserializing deg)."""
-    points: dict[str, ChartPoint] = {}
-    from astro_mcp.core.models import SIGNS
-    for key in ("planets", "angles"):
-        for pcode, pdata in natal.get(key, {}).items():
-            lon = pdata.get("deg", 0.0)
-            sign = pdata.get("sign", "Ari")
-            sign_lon = lon % 30
-            cp = ChartPoint(
-                lon_decimal=lon % 360,
-                sign=sign,
-                sign_lon=sign_lon,
-                house=pdata.get("house"),
-                retrograde=pdata.get("R", False),
-                speed=0.0,
-            )
-            points[pcode] = cp
-    return points
+def _transit_snapshot(
+    jd: float,
+    lat: float,
+    lon: float,
+    house_system: str,
+    fast_planets_only: bool,
+) -> dict[str, ChartPoint]:
+    cusps, _ = calc_houses(jd, lat, lon, house_system)
+    planets = calc_all_planets(jd, cusps, include_asteroids=False)
+    if fast_planets_only:
+        planets = {k: v for k, v in planets.items() if k in FAST_KEYS}
+    return planets
+
+
+def _find_exact_near(
+    tp_code: str,
+    natal_lon: float,
+    asp_angle: float,
+    jd: float,
+) -> str | None:
+    """Locate the exact date of an in-orb aspect by bracketing around ``jd``.
+
+    Walks outwards in half-window steps so the nearest perfection is found
+    rather than an arbitrary one inside a wide bracket.
+    """
+    pid = PLANET_IDS[tp_code]
+    for half in (5.0, 20.0, 60.0, EXACT_SEARCH_DAYS):
+        ex_jd = find_exact_aspect_jd(
+            pid, None, asp_angle, jd - half, jd + half, natal_lon2=natal_lon
+        )
+        if ex_jd:
+            return jd_to_iso(ex_jd)[:10]
+    return None
+
+
+def _scan_aspect_events(
+    natal_points: dict[str, ChartPoint],
+    jd_start: float,
+    days: int,
+    fast_planets_only: bool,
+) -> list[dict[str, Any]]:
+    """Find every transit-to-natal aspect that perfects inside the window.
+
+    ``jd_start`` is midnight UTC on the first day, and the window covers
+    ``days`` whole calendar days from there. Anchoring on midnight rather than
+    on the transit moment keeps this consistent with
+    :func:`~astro_mcp.tools.ephemeris.find_aspect_exact_dates`, which reports
+    the same perfections for the same date range.
+
+    Samples once per day, watching for a sign change in :func:`aspect_delta`,
+    then bisects the bracketing day for the exact moment.
+    """
+    transit_keys = [k for k in PLANET_IDS if k != "NN_m"]
+    if fast_planets_only:
+        transit_keys = [k for k in transit_keys if k in FAST_KEYS]
+
+    jd_end = jd_start + days
+
+    # Cache one longitude sample per body per day; the scan reuses each sample
+    # across all natal points and aspect angles.
+    samples: list[tuple[float, dict[str, float]]] = []
+    for day in range(days + 1):
+        jd = jd_start + day
+        samples.append((jd, {k: calc_planet(jd, PLANET_IDS[k])[0] for k in transit_keys}))
+
+    events: list[dict[str, Any]] = []
+    for tp in transit_keys:
+        for np_code, np_point in natal_points.items():
+            natal_lon = np_point.lon_decimal
+            for asp_code, asp_angle in ASPECT_ANGLES.items():
+                prev_delta: float | None = None
+                for jd, lons in samples:
+                    delta = aspect_delta(lons[tp], natal_lon, asp_angle)
+                    # The second condition guards against the discontinuity that
+                    # a full wrap would introduce between two daily samples.
+                    if (prev_delta is not None and prev_delta * delta < 0
+                            and abs(prev_delta - delta) < 180):
+                        ex_jd = find_exact_aspect_jd(
+                            PLANET_IDS[tp], None, asp_angle,
+                            jd - 1, jd, natal_lon2=natal_lon,
+                        )
+                        if ex_jd is not None and jd_start <= ex_jd < jd_end:
+                            _, speed = calc_planet(ex_jd, PLANET_IDS[tp])
+                            events.append({
+                                "tp": tp,
+                                "np": np_code,
+                                "asp": asp_code,
+                                "exact": jd_to_iso(ex_jd)[:10],
+                                "retro": speed < 0,
+                            })
+                    prev_delta = delta
+
+    events.sort(key=lambda e: e["exact"])
+    return events
 
 
 def calculate_transits(
     transit_date: str = "",
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
+    birth_location: str | dict[str, Any] | None = None,
     transit_time: str | None = None,
     period_days: int = 1,
-    transit_location: str | dict | None = None,
+    transit_location: str | dict[str, Any] | None = None,
     orbs: dict[str, float] | None = None,
     fast_planets_only: bool = False,
     house_system: str = "P",
@@ -66,99 +154,93 @@ def calculate_transits(
     transit_time: Local time at the transit location (HH:MM). Defaults to
         noon local time.  Provide together with transit_location so the
         correct timezone is used for the conversion to UTC.
+    period_days: When greater than 1, an ``aspect_events`` list is returned
+        covering every transit-to-natal aspect that perfects within
+        ``[transit_date, transit_date + period_days]``.
     """
-    # Guard for missing transit_date
     if not transit_date:
-        return {"error": True, "code": "TRANSIT_DATE_MISSING", "message": "transit_date is required."}
-
-    # Resolve natal chart
+        raise AstroError("INPUT_ERROR", "transit_date is required.")
     if not (birth_date and birth_time and birth_location):
-        return {"error": True, "code": "NATAL_MISSING",
-                "message": "birth_date, birth_time and birth_location are required."}
-    natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, degree_format)
+        raise AstroError(
+            "INPUT_ERROR",
+            "birth_date, birth_time and birth_location are required.",
+        )
+    if period_days < 1 or period_days > MAX_PERIOD_DAYS:
+        raise AstroError(
+            "RANGE_TOO_LONG",
+            f"period_days must be between 1 and {MAX_PERIOD_DAYS}.",
+        )
 
-    natal_points = _natal_to_points(natal)
+    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
+    natal_points = chart.all_points
 
     # Transit geo — resolve fully so we have the timezone
     if transit_location:
-        geo = resolve_location(transit_location)
-        geo_lat = geo.lat
-        geo_lon = geo.lon
-        transit_tz = geo.tz
+        tgeo = resolve_location(transit_location)
     else:
-        loc = natal["meta"]["loc"]
-        geo_lat = loc["lat"]
-        geo_lon = loc["lon"]
-        transit_tz = loc.get("tz", "UTC")
+        tgeo = chart.geo
+    transit_hs, hs_warning = resolve_house_system(house_system, tgeo.lat)
 
-    # Build transit date range
-    date_obj = Date.fromisoformat(transit_date)
-    dates = [date_obj + timedelta(days=i) for i in range(max(1, period_days))]
+    try:
+        Date.fromisoformat(transit_date)
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_DATE", f"transit_date '{transit_date}' is not a valid YYYY-MM-DD date."
+        ) from exc
 
-    fast_keys = {"Mo", "Me", "Ve", "Ma", "Su"}
-    all_results = []
+    utc_str, _ = local_to_utc(transit_date, transit_time or "12:00", tgeo.tz)
+    jd = to_jd(utc_str)
 
-    for d in dates[:1]:  # first date for single-day response; full for period
-        # Convert local transit time → UTC using the transit location's timezone
-        time_str = transit_time or "12:00"
-        utc_str, _ = local_to_utc(d.isoformat(), time_str, transit_tz)
-        jd = to_jd(utc_str)
-        cusps, ascmc = calc_houses(jd, geo_lat, geo_lon, house_system)
-        transit_planets = calc_all_planets(
-            jd, cusps,
-            include_asteroids=False,
-            use_mean_node=True,
-            include_lilith=True,
-            include_chiron=True,
+    transit_planets = _transit_snapshot(
+        jd, tgeo.lat, tgeo.lon, transit_hs, fast_planets_only
+    )
+
+    raw_aspects = find_aspects(
+        transit_planets,
+        natal_points,
+        custom_orbs=orbs,
+        angle_orb_keys=set(ANGLE_KEYS),
+    )
+
+    aspects_out: list[dict[str, Any]] = []
+    for asp in raw_aspects:
+        if max_orb is not None and asp.orb > max_orb:
+            continue
+        exact = None
+        if asp.point1 in PLANET_IDS and asp.point2 in natal_points:
+            exact = _find_exact_near(
+                asp.point1,
+                natal_points[asp.point2].lon_decimal,
+                ASPECT_ANGLES[asp.aspect_type],
+                jd,
+            )
+        aspects_out.append(strip_nulls({
+            "tp": asp.point1,
+            "np": asp.point2,
+            "asp": asp.aspect_type,
+            "orb": asp.orb,
+            "apply": asp.applying,
+            "exact": exact,
+        }))
+    aspects_out.sort(key=lambda a: a["orb"])
+
+    result: dict[str, Any] = {
+        "date": transit_date,
+        "dt": utc_str,
+        "period_days": period_days,
+        "transit_planets": {
+            k: serialize_point(v, degree_format) for k, v in transit_planets.items()
+        },
+        "aspects": aspects_out,
+    }
+    if hs_warning:
+        result["house_system_warning"] = hs_warning
+
+    if period_days > 1:
+        # Events are reported for whole calendar days (UTC) starting on
+        # transit_date, not for a window hanging off the transit moment.
+        result["aspect_events"] = _scan_aspect_events(
+            natal_points, to_jd(f"{transit_date}T00:00:00Z"), period_days, fast_planets_only
         )
 
-        if fast_planets_only:
-            transit_planets = {k: v for k, v in transit_planets.items() if k in fast_keys}
-
-        # Find aspects
-        custom_orbs = orbs
-        raw_aspects = find_aspects(
-            transit_planets,
-            natal_points,
-            custom_orbs=custom_orbs,
-            angle_orb_keys={"Asc", "MC", "Dsc", "IC"},
-        )
-
-        # Compute exact dates via bisection
-        aspects_out = []
-        for asp in raw_aspects:
-            exact = None
-            tp_code = asp.point1
-            np_code = asp.point2
-            if tp_code in PLANET_IDS and np_code in natal_points:
-                pid = PLANET_IDS[tp_code]
-                natal_lon = natal_points[np_code].lon_decimal
-                jd_search_end = jd + (period_days if period_days > 1 else 30)
-                ex_jd = find_exact_aspect_jd(
-                    pid, None, ASPECT_ANGLES[asp.aspect_type],
-                    jd - 10, jd_search_end,
-                    natal_lon2=natal_lon,
-                )
-                if ex_jd:
-                    exact = jd_to_iso(ex_jd)[:10]  # date only
-            aspects_out.append(strip_nulls({
-                "tp": asp.point1,
-                "np": asp.point2,
-                "asp": asp.aspect_type,
-                "orb": asp.orb,
-                "apply": asp.applying,
-                "exact": exact,
-            }))
-
-        aspects_out.sort(key=lambda a: a["orb"])
-        if max_orb is not None:
-            aspects_out = [a for a in aspects_out if a["orb"] <= max_orb]
-        return {
-            "date": transit_date,
-            "transit_planets": {
-                k: serialize_point(v, degree_format) for k, v in transit_planets.items()
-            },
-            "aspects": aspects_out,
-        }
-
-    return {}
+    return result

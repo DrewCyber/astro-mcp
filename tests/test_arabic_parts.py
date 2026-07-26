@@ -13,7 +13,7 @@ def test_arabic_parts_structure():
 
 
 def test_all_parts_present():
-    from astro_mcp.tools.arabic_parts import calculate_arabic_parts, PART_FORMULAS
+    from astro_mcp.tools.arabic_parts import PART_FORMULAS, calculate_arabic_parts
     result = calculate_arabic_parts(**BIRTH)
     for code in PART_FORMULAS:
         assert code in result["parts"], f"Missing part: {code}"

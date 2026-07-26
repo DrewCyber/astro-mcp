@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date as Date, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import swisseph as swe
 
 from astro_mcp.core.ephemeris_provider import (
-    PLANET_IDS,
     build_angles,
     build_house_cusps,
     calc_all_planets,
@@ -16,11 +15,14 @@ from astro_mcp.core.ephemeris_provider import (
     calc_planet,
     find_aspects,
     jd_to_iso,
+    resolve_house_system,
     to_jd,
 )
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_house, serialize_point
 from astro_mcp.core.geocoding import resolve_location
-from astro_mcp.tools.transits import _natal_to_points
+from astro_mcp.core.models import ChartPoint, GeoLocation
+from astro_mcp.tools.natal import compute_natal
 
 
 def _find_return_jd(
@@ -57,7 +59,7 @@ def _find_return_jd(
             for _ in range(60):
                 jd_mid = (jd_lo + jd_hi) / 2
                 d_mid = signed_diff(jd_mid)
-                if abs(d_mid) < 1e-6:
+                if abs(d_mid) < 1e-9:
                     return jd_mid
                 if d_mid * signed_diff(jd_lo) <= 0:
                     jd_hi = jd_mid
@@ -67,16 +69,29 @@ def _find_return_jd(
         prev_d = curr_d
         jd += step
 
-    raise ValueError("Return not found in search window.")
+    raise AstroError(
+        "RETURN_NOT_FOUND",
+        f"No return found within {search_days} days of the search start.",
+    )
+
+
+def _return_geo(
+    return_location: str | dict[str, Any] | None,
+    fallback: GeoLocation,
+) -> GeoLocation:
+    """Relocation target for the return chart, defaulting to the birth place."""
+    if return_location:
+        return resolve_location(return_location)
+    return fallback
 
 
 def calculate_solar_return(
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
+    birth_location: str | dict[str, Any] | None = None,
     year: int = 0,
-    return_location: str | dict | None = None,
-    location: str | dict | None = None,
+    return_location: str | dict[str, Any] | None = None,
+    location: str | dict[str, Any] | None = None,
     house_system: str = "P",
     degree_format: str = "dms",
 ) -> dict[str, Any]:
@@ -85,97 +100,97 @@ def calculate_solar_return(
     if location and not return_location:
         return_location = location
     if not (birth_date and birth_time and birth_location):
-        return {"error": True, "code": "NATAL_MISSING",
-                "message": "birth_date, birth_time and birth_location are required."}
-    from astro_mcp.tools.natal import calculate_natal_chart
-    natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, degree_format)
-
-    natal_sun_lon = natal["planets"]["Su"]["deg"]
-    natal_date_str = natal["meta"]["dt"][:10]
+        raise AstroError(
+            "INPUT_ERROR",
+            "birth_date, birth_time and birth_location are required.",
+        )
+    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
 
     if not year:
-        from datetime import datetime
-        year = datetime.utcnow().year
+        year = datetime.now(UTC).year
 
-    # Start search from approximate birthday in target year
-    search_start_str = f"{year}-01-01T00:00:00Z"
-    jd_start = to_jd(search_start_str)
-    sr_jd = _find_return_jd(swe.SUN, natal_sun_lon, jd_start, search_days=400)
+    # The Sun returns to its natal degree once per year, so searching a full
+    # year forward from 1 January always brackets exactly one return.
+    jd_start = to_jd(f"{year}-01-01T00:00:00Z")
+    sr_jd = _find_return_jd(
+        swe.SUN, chart.planets["Su"].lon_decimal, jd_start, search_days=400
+    )
 
-    # Return location
-    rloc = resolve_location(return_location) if return_location else None
-    geo = rloc if rloc else type("G", (), {
-        "lat": natal["meta"]["loc"]["lat"],
-        "lon": natal["meta"]["loc"]["lon"],
-        "name": natal["meta"]["loc"].get("name", ""),
-    })()
+    geo = _return_geo(return_location, chart.geo)
+    hs, hs_warning = resolve_house_system(house_system, geo.lat)
 
-    cusps, ascmc = calc_houses(sr_jd, geo.lat, geo.lon, house_system)
+    cusps, ascmc = calc_houses(sr_jd, geo.lat, geo.lon, hs)
     sr_planets = calc_all_planets(sr_jd, cusps, include_asteroids=False)
     sr_angles = build_angles(ascmc, cusps)
     sr_houses = build_house_cusps(cusps)
 
-    natal_points = _natal_to_points(natal)
-    from astro_mcp.core.models import ChartPoint
     sr_all: dict[str, ChartPoint] = {**sr_planets, **sr_angles}
-    sr2n = find_aspects(sr_all, natal_points, angle_orb_keys={"Asc", "MC"})
+    sr2n = find_aspects(sr_all, chart.all_points, angle_orb_keys={"Asc", "MC"})
 
-    return {
+    result: dict[str, Any] = {
         "return_dt": jd_to_iso(sr_jd),
-        "return_loc": {"lat": geo.lat, "lon": geo.lon, "name": getattr(geo, "name", "")},
+        "return_loc": {"lat": geo.lat, "lon": geo.lon, "name": geo.name},
+        "hs": hs,
         "sr_planets": {k: serialize_point(v, degree_format) for k, v in sr_planets.items()},
-        "sr_angles": {k: serialize_point(v, degree_format, include_house=False) for k, v in sr_angles.items()},
+        "sr_angles": {k: serialize_point(v, degree_format, include_house=False)
+                      for k, v in sr_angles.items()},
         "sr_houses": [serialize_house(h, degree_format) for h in sr_houses],
         "sr_to_natal_aspects": [
             {"sp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb}
             for a in sr2n
         ],
     }
+    if hs_warning:
+        result["house_system_warning"] = hs_warning
+    return result
 
 
 def calculate_lunar_return(
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
+    birth_location: str | dict[str, Any] | None = None,
     from_date: str | None = None,
     count: int = 1,
-    return_location: str | dict | None = None,
+    return_location: str | dict[str, Any] | None = None,
     house_system: str = "P",
     degree_format: str = "dms",
 ) -> dict[str, Any]:
     """Tool 6: Lunar return chart(s)."""
     if not (birth_date and birth_time and birth_location):
-        return {"error": True, "code": "NATAL_MISSING",
-                "message": "birth_date, birth_time and birth_location are required."}
-    from astro_mcp.tools.natal import calculate_natal_chart
-    natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, degree_format)
+        raise AstroError(
+            "INPUT_ERROR",
+            "birth_date, birth_time and birth_location are required.",
+        )
+    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
 
-    natal_moon_lon = natal["planets"]["Mo"]["deg"]
-    count = min(count, 12)
+    natal_moon_lon = chart.planets["Mo"].lon_decimal
+    count = max(1, min(count, 12))
 
-    from datetime import datetime
-    start_str = from_date or datetime.utcnow().strftime("%Y-%m-%d")
+    start_str = from_date or datetime.now(UTC).strftime("%Y-%m-%d")
     jd_search = to_jd(f"{start_str}T00:00:00Z")
 
-    rloc = resolve_location(return_location) if return_location else None
-    geo_lat = rloc.lat if rloc else natal["meta"]["loc"]["lat"]
-    geo_lon = rloc.lon if rloc else natal["meta"]["loc"]["lon"]
+    geo = _return_geo(return_location, chart.geo)
+    hs, hs_warning = resolve_house_system(house_system, geo.lat)
 
     returns = []
     for _ in range(count):
         lr_jd = _find_return_jd(swe.MOON, natal_moon_lon, jd_search, search_days=35)
-        cusps, ascmc = calc_houses(lr_jd, geo_lat, geo_lon, house_system)
+        cusps, ascmc = calc_houses(lr_jd, geo.lat, geo.lon, hs)
         lr_planets = calc_all_planets(lr_jd, cusps, include_asteroids=False)
         lr_angles = build_angles(ascmc, cusps)
         lr_houses = build_house_cusps(cusps)
 
         returns.append({
             "return_dt": jd_to_iso(lr_jd),
-            "return_loc": {"lat": geo_lat, "lon": geo_lon},
+            "return_loc": {"lat": geo.lat, "lon": geo.lon, "name": geo.name},
             "lr_planets": {k: serialize_point(v, degree_format) for k, v in lr_planets.items()},
-            "lr_angles": {k: serialize_point(v, degree_format, include_house=False) for k, v in lr_angles.items()},
+            "lr_angles": {k: serialize_point(v, degree_format, include_house=False)
+                          for k, v in lr_angles.items()},
             "lr_houses": [serialize_house(h, degree_format) for h in lr_houses],
         })
-        jd_search = lr_jd + 27.0  # advance past this return
+        jd_search = lr_jd + 20.0  # advance well past this return, before the next
 
-    return {"returns": returns}
+    result: dict[str, Any] = {"hs": hs, "returns": returns}
+    if hs_warning:
+        result["house_system_warning"] = hs_warning
+    return result

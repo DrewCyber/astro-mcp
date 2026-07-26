@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TypedDict
-
+from dataclasses import dataclass
+from typing import Any, TypedDict
 
 # ---------------------------------------------------------------------------
 # Input / wire types
@@ -69,6 +68,38 @@ class HouseCusp:
     sign: str
     ruler: str
     modern_ruler: str | None
+
+
+ANGLE_KEYS: frozenset[str] = frozenset({"Asc", "MC", "Dsc", "IC"})
+
+
+@dataclass
+class NatalChart:
+    """Full-precision internal representation of a computed chart.
+
+    Tools that build on a natal chart (transits, progressions, returns,
+    synastry, ...) must consume *this*, never the serialised dict.  The wire
+    format rounds longitudes to two decimals and drops ``speed`` entirely, so
+    re-parsing it injects ~18 arcsec of error into every derived orb and
+    silently breaks applying/separating determination.
+    """
+
+    meta: dict[str, Any]
+    planets: dict[str, ChartPoint]
+    angles: dict[str, ChartPoint]
+    cusps: list[float]
+    houses: list[HouseCusp]
+    aspects: list[Aspect]
+    geo: GeoLocation
+    jd: float
+    house_system: str
+    dst_warning: str | None = None
+    house_system_warning: str | None = None
+
+    @property
+    def all_points(self) -> dict[str, ChartPoint]:
+        """Planets and angles in one map, for aspect scanning."""
+        return {**self.planets, **self.angles}
 
 
 # ---------------------------------------------------------------------------

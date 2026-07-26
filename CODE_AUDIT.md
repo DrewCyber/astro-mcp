@@ -3,6 +3,7 @@
 **Audit date:** 2026-07-26
 **Scope:** `src/astro_mcp/` (21 modules, ~2,100 LOC), `tests/` (10 files, 57 tests), packaging & repo hygiene
 **Toolchain used:** `pytest`, `ruff`, `mypy --strict`, targeted runtime probes
+**Remediation status:** all Critical, High and Medium findings resolved — see [§8](#8-remediation-outcome)
 
 ---
 
@@ -466,3 +467,62 @@ Worth preserving through any refactor:
 - **Module layering** — `server → tools → core` with no logic in the transport layer is the right shape; the only violations are `synastry → transits._natal_to_points` and the tool-to-tool calls that H-1 resolves.
 - **Token-efficient output contract** — abbreviated codes, omitted `R` when direct, and `to_compact_json` are well-judged for an LLM consumer.
 - **Signed-arc handling for conjunction/opposition** in `find_exact_aspect_jd` — the comment explaining why absolute distance cannot cross zero shows real understanding of the numerics.
+
+---
+
+## 8. Remediation outcome
+
+All Critical, High and Medium findings are resolved. Low findings are resolved except L-3, which is partially addressed: regression coverage was added for every Critical/High defect, but broader per-tool coverage is still thin.
+
+### Quality gates, before and after
+
+| Gate | Before | After |
+|---|---|---|
+| `pytest` | 57 passed | **178 passed** |
+| `ruff check src tests` | 69 errors | **clean** |
+| `mypy --strict src` | 60 errors in 14 files | **clean** (23 modules) |
+| CI workflow | none | `.github/workflows/ci.yml` (3.11 + 3.12) |
+| Tools working via MCP dispatch | not verified | **14/14** |
+
+### Verification highlights
+
+Each Critical defect is now pinned by a behavioural test in [tests/test_audit_regressions.py](tests/test_audit_regressions.py):
+
+- **C-1** — overlays are asserted equal to `house_of(person1_planet, person2_cusps)`, asserted *unequal* to each person's own natal houses, and asserted asymmetric between the two directions.
+- **C-2** — the 2021 Saturn-square-Uranus triple pass is reproduced exactly (`2021-02-17`, `2021-06-14`, `2021-12-24`) with the middle pass correctly flagged retrograde. The 2020 Great Conjunction is asserted to be a *single* pass, guarding against over-grouping.
+- **C-3** — profected age is checked on both sides of the anniversary boundary, including a leap-day birth. The old `days // 365` arithmetic drifted one day per leap year and moved the year lord early.
+- **C-4** — an out-of-range body now raises rather than returning a Moshier-derived position.
+- **H-3** — `is_applying` is exercised across 16 hand-derived cases spanning all four quadrants, plus an antisymmetry property test over the full circle.
+
+### Corrections to the original findings
+
+- **C-4 was understated.** The finding described discarded error flags. Runtime probing showed the failure mode is worse: with the `.se1` files absent, `swe.calc_ut` does **not** raise for the main planets — it silently substitutes the low-precision Moshier ephemeris and reports that only in the return flags (`retflag & FLG_MOSEPH`). Every chart would have been quietly degraded. `_check_calc_flags` now treats this as an error, and `init_ephemeris()` fails fast at startup.
+- **C-2's `peak_orb` could not be salvaged.** Since every reported occurrence is a real perfection, a "tightest orb" is ~0 by construction and carries no information. It was replaced with `max_separation_orb`, emitted only for multi-pass occurrences, describing how far the bodies retreat mid-retrograde.
+- **Two further latent bugs surfaced during the fixes**, both on dead paths that would have produced wrong numbers had they been reached: `_get_lon` in `arabic_parts.py` fell back to `idx * 30.0` for serialised house dicts (which never carry a `lon_decimal` key), and `requests>=2.34.2` in `pyproject.toml` pinned a version that does not exist, so a clean install would have failed. Both are removed.
+- **The regression tests found two bugs in the fixes themselves.** The first `is_applying` rewrite still inverted its answer across the 0°/360° conjunction wrap, and the new `init_ephemeris` validation called `swe.set_ephe_path()` *before* validating, so a single negative test poisoned global Swiss Ephemeris state for the rest of the suite. Both are fixed; both were invisible without the tests.
+
+### Deliberate non-changes
+
+- **Naive datetimes** (`DTZ001`/`DTZ007`) are suppressed in ruff config rather than "fixed". A birth time is a wall-clock local time; attaching `tzinfo` before the fold resolution in `local_to_utc` would defeat the DST-ambiguity handling praised in §7.
+- **`mypy` decorator rules** are relaxed for `astro_mcp.server` only, because the MCP SDK ships untyped decorators. The other 21 modules remain fully strict.
+- **Rectification scores are now explicitly relative.** Restricting scoring to time-sensitive points (angles + Moon) means the old absolute `score < 30` cutoff no longer had meaning, so confidence is derived from the *relative* gap between top candidates and the output carries a `score_note` saying so.
+
+### M-1 in detail: the schemas were the drift
+
+Replacing the 260 lines of hand-written JSON Schema in `server.py` with Pydantic models ([schemas.py](src/astro_mcp/schemas.py)) was filed as a tidiness item. It turned out to be a correctness one. Comparing the models against the real function signatures found **four** mismatches that had been shipping:
+
+| Tool | Mismatch |
+|---|---|
+| `find_aspect_exact_dates` | `degree_format` accepted in code, absent from the schema |
+| `calculate_antiscia` | `orb` and `include_contra` accepted in code, absent from the schema |
+| `calculate_antiscia` | `include_transits_date` **advertised in the schema, not accepted by the function** — any client that used it got an argument error |
+
+The first three were documentation gaps. The last was a promise the code did not keep, so the feature was implemented rather than withdrawn, matching the decision taken for H-2. Transit contacts to antiscia are computed directly from the ephemeris (conjunctions only, as the tradition treats a mirrored degree) instead of routing through `calculate_transits`, which keeps the `tools -> core` layering intact.
+
+`server.py` drops from 425 lines to 130. Both the advertised schema and the runtime validation now derive from one declaration, and [tests/test_schemas.py](tests/test_schemas.py) asserts set-equality in both directions between each model's fields and its function's parameters — so this class of drift is now a test failure rather than a silent contract break.
+
+Two consequences worth noting:
+
+- **Validation moved earlier and got stricter.** `extra="forbid"` means a mistyped argument name is now reported as `hous_system: Extra inputs are not permitted` instead of being silently ignored, and coordinate ranges, enums and the 366-day transit ceiling are enforced before any Swiss Ephemeris work begins. The `except TypeError` arm of the dispatcher became unreachable and was removed.
+- **The SDK's own validation is disabled** (`@server.call_tool(validate_input=False)`). It validates against the same schema a second time and reports failures as prose, which broke the structured-JSON error contract that every other failure path honours. Since the models are the source of that schema, nothing is lost by validating once, in the layer that can emit the project's own error format.
+

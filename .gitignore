@@ -43,3 +43,5 @@ htmlcov/
 
 # Private data
 private/
+# Scratch space (may contain personal birth data)
+tmp/

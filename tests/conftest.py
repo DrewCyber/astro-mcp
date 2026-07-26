@@ -1,9 +1,6 @@
 """Shared test fixtures for astro-mcp."""
 
-import json
-import os
 import pytest
-
 
 # Known natal data: Albert Einstein, 14 Mar 1879, 11:30 LMT, Ulm, Germany
 EINSTEIN_BIRTH = {

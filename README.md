@@ -18,10 +18,10 @@ Implements 14 tools backed by Swiss Ephemeris (`pyswisseph`) and integrates with
 | 8 | `calculate_composite_chart` | Midpoint or Davison composite chart |
 | 9 | `calculate_profections` | Annual profection — year lord and activated houses |
 | 10 | `get_planetary_hours` | 24 planetary hours for any day/location |
-| 11 | `calculate_arabic_parts` | 7 Arabic Parts (Fortune, Spirit, Marriage, etc.) |
+| 11 | `calculate_arabic_parts` | 12 Arabic Parts / Lots (Fortune, Spirit, Marriage, etc.) |
 | 12 | `get_ephemeris` | Planet position table over a date range |
 | 13 | `find_aspect_exact_dates` | Find exact dates of a specific aspect |
-| 14 | `calculate_antiscia` | Antiscia and contra-antiscia points |
+| 14 | `calculate_antiscia` | Antiscia and contra-antiscia points, with optional transit contacts |
 
 ## Installation
 
@@ -79,6 +79,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `GEOCODE_CACHE_SIZE` | `512` | LRU cache size for geocoding results |
 | `DEFAULT_HOUSE_SYSTEM` | `P` | `P`=Placidus, `W`=Whole Sign, `K`=Koch |
 | `DEFAULT_ORB_FACTOR` | `1.0` | Global orb multiplier (0.5–1.5) |
+| `NODE_TYPE` | `true` | `true`=True Node, `mean`=Mean Node (applied consistently across all tools) |
 | `LOG_LEVEL` | `WARNING` | Python logging level |
 
 ## Architecture
@@ -86,9 +87,11 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```
 src/astro_mcp/
 ├── server.py              # MCP server — tool registration and dispatch
+├── schemas.py             # Pydantic input models (source of the JSON schemas)
 ├── config.py              # Settings from environment variables
 ├── core/
 │   ├── models.py          # Data models and astrological constants
+│   ├── errors.py          # AstroError and the structured error codes
 │   ├── ephemeris_provider.py  # Swiss Ephemeris wrapper (pyswisseph)
 │   ├── geocoding.py       # City → lat/lon/tz (geopy + timezonefinder)
 │   └── formatters.py      # LLM-optimized serialization
@@ -109,6 +112,12 @@ src/astro_mcp/
 ## Output Format
 
 All tools return compact JSON without whitespace to minimise LLM context tokens (~75% smaller than verbose JSON). Planet codes are abbreviated (`Su`, `Mo`, `Me`, etc.), aspects use 3-letter codes (`Cnj`, `Tri`, `Squ`), and the retrograde flag (`"R":true`) is omitted when direct to save additional tokens.
+
+Failures use the same contract, so a client never has to parse prose:
+
+```json
+{"error":true,"code":"INPUT_ERROR","message":"Invalid arguments for 'calculate_natal_chart'.","hint":"birth_location.lat: Input should be less than or equal to 90"}
+```
 
 ## Planet Codes
 

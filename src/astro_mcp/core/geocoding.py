@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import functools
 import logging
+from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
+from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 from timezonefinder import TimezoneFinder
 
 from astro_mcp.config import settings
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.models import GeoLocation
 
 logger = logging.getLogger(__name__)
@@ -18,7 +21,7 @@ logger = logging.getLogger(__name__)
 _tf = TimezoneFinder()
 
 
-def _make_geocoder():
+def _make_geocoder() -> Any:
     if settings.geocoding_provider == "opencage" and settings.opencage_api_key:
         from geopy.geocoders import OpenCage
         return OpenCage(api_key=settings.opencage_api_key)
@@ -34,17 +37,23 @@ def geocode(city: str) -> GeoLocation:
     try:
         location = _geocoder.geocode(city, timeout=10)
     except (GeocoderTimedOut, GeocoderServiceError) as exc:
-        raise ValueError(f"GEOCODE_FAILED: {exc}") from exc
+        raise AstroError(
+            "GEOCODE_FAILED",
+            f"Geocoding service unavailable while looking up '{city}'.",
+            hint="Retry, or pass explicit {lat, lon, tz} coordinates instead.",
+        ) from exc
     if location is None:
-        raise ValueError(
-            f"GEOCODE_FAILED: City '{city}' not found. "
-            "Please provide full city name or coordinates."
+        raise AstroError(
+            "GEOCODE_FAILED",
+            f"City '{city}' not found.",
+            hint="Provide the full city name (e.g. 'Ulm, Germany') or coordinates.",
         )
     tz = _tf.timezone_at(lat=location.latitude, lng=location.longitude)
     if tz is None:
-        raise ValueError(
-            f"TIMEZONE_UNKNOWN: Cannot determine timezone for '{city}'. "
-            "Please provide tz explicitly."
+        raise AstroError(
+            "TIMEZONE_UNKNOWN",
+            f"Cannot determine the timezone for '{city}'.",
+            hint="Pass tz explicitly in the location object.",
         )
     return GeoLocation(
         lat=round(location.latitude, 6),
@@ -54,20 +63,56 @@ def geocode(city: str) -> GeoLocation:
     )
 
 
-def resolve_location(location: str | dict) -> GeoLocation:
+def resolve_location(location: str | dict[str, Any]) -> GeoLocation:
     """
     Resolve a location which is either a city string or {'lat', 'lon', 'tz'} dict.
     """
     if isinstance(location, str):
         return geocode(location)
-    lat = float(location["lat"])
-    lon = float(location["lon"])
+    if not isinstance(location, dict):
+        raise AstroError(
+            "INPUT_ERROR",
+            "location must be a city name or an object with lat/lon.",
+        )
+    try:
+        lat = float(location["lat"])
+        lon = float(location["lon"])
+    except KeyError as exc:
+        raise AstroError(
+            "INVALID_COORDINATES",
+            "location object requires both 'lat' and 'lon'.",
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise AstroError(
+            "INVALID_COORDINATES",
+            "location 'lat' and 'lon' must be numbers.",
+        ) from exc
+
+    # Guard the ranges here: out-of-range values otherwise reach swe.houses,
+    # which fails with an opaque generic error far from the actual cause.
+    if not -90.0 <= lat <= 90.0:
+        raise AstroError("INVALID_COORDINATES", f"Latitude {lat} is outside [-90, 90].")
+    if not -180.0 <= lon <= 180.0:
+        raise AstroError("INVALID_COORDINATES", f"Longitude {lon} is outside [-180, 180].")
+
     tz_str: str | None = location.get("tz")
     if tz_str is None:
         tz_str = _tf.timezone_at(lat=lat, lng=lon)
     if tz_str is None:
-        raise ValueError("TIMEZONE_UNKNOWN: provide tz in location object.")
-    return GeoLocation(lat=lat, lon=lon, tz=tz_str)
+        raise AstroError(
+            "TIMEZONE_UNKNOWN",
+            f"Cannot determine the timezone for lat={lat}, lon={lon}.",
+            hint="Pass tz explicitly in the location object.",
+        )
+    try:
+        ZoneInfo(tz_str)
+    except Exception as exc:
+        raise AstroError(
+            "TIMEZONE_UNKNOWN",
+            f"'{tz_str}' is not a valid IANA timezone.",
+            hint="Use a name such as 'Europe/Berlin'.",
+        ) from exc
+    return GeoLocation(lat=lat, lon=lon, tz=tz_str, name=str(location.get("name", "")))
 
 
 def local_to_utc(
@@ -104,10 +149,15 @@ def local_to_utc(
     Returns:
         ``(utc_iso_string, dst_warning_or_None)``
     """
-    from datetime import datetime
-
     fmt = "%Y-%m-%d %H:%M:%S" if time_str.count(":") == 2 else "%Y-%m-%d %H:%M"
-    naive_dt = datetime.strptime(f"{date_str} {time_str}", fmt)
+    try:
+        naive_dt = datetime.strptime(f"{date_str} {time_str}", fmt)
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_TIME",
+            f"Could not parse date '{date_str}' with time '{time_str}'.",
+            hint="Expected date as YYYY-MM-DD and time as HH:MM or HH:MM:SS.",
+        ) from exc
     tz = ZoneInfo(tz_str)
     utc_zone = ZoneInfo("UTC")
 

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from astro_mcp.core.ephemeris_provider import calc_rise_set, to_jd, jd_to_iso
+from astro_mcp.core.ephemeris_provider import calc_rise_set, jd_to_iso, to_jd
 from astro_mcp.core.geocoding import resolve_location
 from astro_mcp.core.models import CHALDEAN_ORDER, WEEKDAY_TO_RULER
 
@@ -21,7 +21,7 @@ def _jd_to_local_time(jd: float, tz_str: str) -> str:
 
 def get_planetary_hours(
     date: str,
-    location: str | dict,
+    location: str | dict[str, Any],
     tz_output: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -34,8 +34,8 @@ def get_planetary_hours(
 
     # Search from local midnight (00:00 local → UTC) so rise_trans always finds
     # today's sunrise and sunset regardless of the UTC offset.
-    from zoneinfo import ZoneInfo as _ZI
     from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
     local_midnight = _dt.fromisoformat(f"{date}T00:00:00").replace(tzinfo=_ZI(tz))
     utc_midnight = local_midnight.astimezone(_ZI("UTC"))
     jd_start = to_jd(utc_midnight.strftime("%Y-%m-%dT%H:%M:%SZ"))

@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-from datetime import date as Date, datetime
+from datetime import date as Date
+from datetime import datetime
+from itertools import pairwise
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from astro_mcp.core.ephemeris_provider import (
-    ASPECT_ANGLES,
-    PLANET_IDS,
-    build_chart_point,
+    aspect_delta,
     calc_planet,
     find_exact_aspect_jd,
     jd_to_iso,
     lon_to_sign_info,
     to_jd,
 )
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import decimal_to_dms
+from astro_mcp.core.models import ASPECT_ANGLES, PLANET_IDS
 
+MAX_EPHEMERIS_ROWS = 10_000
 
 STEP_HOURS: dict[str, float] = {
     "1h": 1 / 24,
@@ -30,6 +33,36 @@ STEP_HOURS: dict[str, float] = {
     "30d": 30.0,
 }
 
+# A retrograde loop can carry a body back and forth across the same aspect at
+# most three times, and the whole sequence fits inside roughly half a year even
+# for the slowest pairings.
+TRIPLE_PASS_WINDOW_DAYS = 200
+
+# The Moon covers ~13 degrees a day, so it can pass clean through an aspect --
+# and back out of orb -- inside a single coarse scan step. Every other body is
+# slow enough for the wide step.
+FAST_SCAN_STEP_DAYS = 1 / 8      # 3 hours
+DEFAULT_SCAN_STEP_DAYS = 0.5
+FAST_BODIES = frozenset({"Mo"})
+
+# Guard against a Moon scan over a decade at 3-hour resolution.
+MAX_SCAN_SAMPLES = 200_000
+
+
+def _end_of_day_jd(date_to: str) -> float:
+    """Julian Day for the *end* of ``date_to``.
+
+    ``date_to`` names a day, not an instant. Anchoring it at 00:00 silently
+    excluded the whole of the final requested day, so an aspect perfecting at
+    00:40 on ``date_to`` was reported as not happening at all.
+    """
+    return to_jd(f"{date_to}T23:59:59Z")
+
+
+def _scan_step_days(moving: set[str]) -> float:
+    """Scan resolution needed to avoid stepping over a perfection."""
+    return FAST_SCAN_STEP_DAYS if moving & FAST_BODIES else DEFAULT_SCAN_STEP_DAYS
+
 
 def _resolve_step_days(step: str, interval_days: int | None, interval_hours: int | None) -> float:
     if interval_hours is not None and interval_hours > 0:
@@ -39,12 +72,21 @@ def _resolve_step_days(step: str, interval_days: int | None, interval_hours: int
     return STEP_HOURS.get(step, 1.0)
 
 
+def _parse_date(value: str, field: str) -> Date:
+    try:
+        return Date.fromisoformat(value)
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_DATE", f"{field} '{value}' is not a valid YYYY-MM-DD date."
+        ) from exc
+
+
 def _format_dt_for_tz(jd: float, step_jd: float, output_tz: str) -> str:
     dt_utc = datetime.fromisoformat(jd_to_iso(jd).replace("Z", "+00:00"))
     dt_local = dt_utc.astimezone(ZoneInfo(output_tz))
     if step_jd >= 1:
         return dt_local.date().isoformat()
-    return dt_local.isoformat().replace("+00:00", "Z")
+    return dt_local.isoformat()
 
 
 def _build_ephemeris_rows(
@@ -59,11 +101,13 @@ def _build_ephemeris_rows(
 ) -> list[dict[str, Any]]:
     pid = PLANET_IDS[planet]
     jd_start = to_jd(f"{date_from}T00:00:00Z")
-    jd_end = to_jd(f"{date_to}T00:00:00Z")
+    jd_end = _end_of_day_jd(date_to)
 
     rows = []
     jd = jd_start
-    while jd <= jd_end + 0.001:
+    # jd_end is the last instant of date_to, so no float fudge is needed to
+    # include the final row -- and adding one would emit a row past midnight.
+    while jd <= jd_end:
         lon, speed = calc_planet(jd, pid)
         sign, sign_lon = lon_to_sign_info(lon)
         if degree_format == "dms":
@@ -102,26 +146,36 @@ def get_ephemeris(
     planets = [planet] if isinstance(planet, str) else list(planet)
     unknown = [p for p in planets if p not in PLANET_IDS]
     if unknown:
-        return {
-            "error": True,
-            "code": "UNKNOWN_PLANET",
-            "message": f"Planet code(s) not recognized: {', '.join(unknown)}",
-        }
+        raise AstroError(
+            "UNKNOWN_PLANET",
+            f"Planet code(s) not recognized: {', '.join(unknown)}",
+            hint=f"Valid codes: {', '.join(sorted(PLANET_IDS))}",
+        )
 
     step_jd = _resolve_step_days(step, interval_days, interval_hours)
 
-    # Validate range
-    d_from = Date.fromisoformat(date_from)
-    d_to = Date.fromisoformat(date_to)
-    total_days = (d_to - d_from).days
-    if total_days / step_jd > 10000:
-        return {"error": True, "code": "RANGE_TOO_LONG",
-                "message": "Requested range/step combination too large (>10,000 rows)."}
+    d_from = _parse_date(date_from, "date_from")
+    d_to = _parse_date(date_to, "date_to")
+    if d_to < d_from:
+        raise AstroError("INVALID_DATE", "date_to must be on or after date_from.")
+
+    # date_to is inclusive, so the span covers one more day than the difference.
+    total_days = (d_to - d_from).days + 1
+    if total_days / step_jd > MAX_EPHEMERIS_ROWS:
+        raise AstroError(
+            "RANGE_TOO_LONG",
+            f"Requested range/step combination exceeds {MAX_EPHEMERIS_ROWS:,} rows.",
+            hint="Shorten the date range or use a larger step.",
+        )
 
     try:
         ZoneInfo(output_tz)
-    except Exception:
-        output_tz = "UTC"
+    except Exception as exc:
+        raise AstroError(
+            "INPUT_ERROR",
+            f"'{output_tz}' is not a valid IANA timezone.",
+            hint="Use a name such as 'UTC' or 'Europe/Berlin'.",
+        ) from exc
 
     base_payload = {
         "date_from": date_from,
@@ -132,28 +186,32 @@ def get_ephemeris(
 
     if len(planets) == 1:
         p = planets[0]
-        rows = _build_ephemeris_rows(
-            p, date_from, date_to, step_jd, output_tz,
-            include_speed, include_retrograde, degree_format,
-        )
         return {
             **base_payload,
             "planet": p,
-            "rows": rows,
+            "rows": _build_ephemeris_rows(
+                p, date_from, date_to, step_jd, output_tz,
+                include_speed, include_retrograde, degree_format,
+            ),
         }
 
-    rows_by_planet = {
-        p: _build_ephemeris_rows(
-            p, date_from, date_to, step_jd, output_tz,
-            include_speed, include_retrograde, degree_format,
-        )
-        for p in planets
-    }
     return {
         **base_payload,
         "planets": planets,
-        "rows_by_planet": rows_by_planet,
+        "rows_by_planet": {
+            p: _build_ephemeris_rows(
+                p, date_from, date_to, step_jd, output_tz,
+                include_speed, include_retrograde, degree_format,
+            )
+            for p in planets
+        },
     }
+
+
+def _lon_at(jd: float, pid1: int, pid2: int | None, natal_lon2: float | None) -> tuple[float, float]:
+    lon1, _ = calc_planet(jd, pid1)
+    lon2 = natal_lon2 if natal_lon2 is not None else calc_planet(jd, pid2)[0]  # type: ignore[arg-type]
+    return lon1, lon2
 
 
 def find_aspect_exact_dates(
@@ -164,126 +222,141 @@ def find_aspect_exact_dates(
     date_to: str,
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
+    birth_location: str | dict[str, Any] | None = None,
     orb: float = 1.0,
     mode: str = "auto",
     degree_format: str = "dms",
 ) -> dict[str, Any]:
-    """Tool 13: Find exact dates of a specific aspect between two bodies."""
+    """Tool 13: Find exact dates of a specific aspect between two bodies.
+
+    Groups crossings that belong to the same retrograde loop into a single
+    occurrence so ``is_triple_pass`` and ``peak_orb`` describe the real event
+    rather than a placeholder.
+    """
     if planet1 not in PLANET_IDS:
-        return {"error": True, "code": "UNKNOWN_PLANET", "message": f"Unknown: {planet1}"}
+        raise AstroError("UNKNOWN_PLANET", f"Unknown planet code: {planet1}")
     if aspect not in ASPECT_ANGLES:
-        return {"error": True, "code": "UNKNOWN_ASPECT", "message": f"Unknown aspect: {aspect}"}
+        raise AstroError(
+            "UNKNOWN_ASPECT",
+            f"Unknown aspect: {aspect}",
+            hint=f"Valid aspects: {', '.join(ASPECT_ANGLES)}",
+        )
+    if orb <= 0:
+        raise AstroError("INPUT_ERROR", "orb must be greater than 0.")
 
     asp_angle = ASPECT_ANGLES[aspect]
     pid1 = PLANET_IDS[planet1]
 
-    # Static natal point or live planet?
     natal_lon2: float | None = None
     pid2: int | None = None
 
     mode_resolved = mode
     if mode_resolved == "auto":
-        mode_resolved = "transit-to-natal" if (birth_date and birth_time and birth_location) else "transit-to-transit"
+        mode_resolved = (
+            "transit-to-natal"
+            if (birth_date and birth_time and birth_location)
+            else "transit-to-transit"
+        )
 
     if mode_resolved == "transit-to-natal":
         if not (birth_date and birth_time and birth_location):
-            return {
-                "error": True,
-                "code": "NATAL_CONTEXT_MISSING",
-                "message": "birth_date, birth_time and birth_location are required in transit-to-natal mode.",
-            }
-        from astro_mcp.tools.natal import calculate_natal_chart
-        natal_data = calculate_natal_chart(birth_date, birth_time, birth_location)
-        if planet2 in natal_data.get("planets", {}):
-            natal_lon2 = float(natal_data["planets"][planet2]["deg"])
-        elif planet2 in natal_data.get("angles", {}):
-            natal_lon2 = float(natal_data["angles"][planet2]["deg"])
-        else:
-            return {"error": True, "code": "UNKNOWN_PLANET", "message": f"Unknown: {planet2}"}
+            raise AstroError(
+                "INPUT_ERROR",
+                "birth_date, birth_time and birth_location are required in "
+                "transit-to-natal mode.",
+            )
+        from astro_mcp.tools.natal import compute_natal
+        chart = compute_natal(birth_date, birth_time, birth_location)
+        point = chart.all_points.get(planet2)
+        if point is None:
+            raise AstroError("UNKNOWN_PLANET", f"Unknown natal point: {planet2}")
+        natal_lon2 = point.lon_decimal
     elif planet2 in PLANET_IDS:
         pid2 = PLANET_IDS[planet2]
     else:
-        return {"error": True, "code": "UNKNOWN_PLANET", "message": f"Unknown: {planet2}"}
+        raise AstroError("UNKNOWN_PLANET", f"Unknown planet code: {planet2}")
+
+    d_from = _parse_date(date_from, "date_from")
+    d_to = _parse_date(date_to, "date_to")
+    if d_to < d_from:
+        raise AstroError("INVALID_DATE", "date_to must be on or after date_from.")
 
     jd_start = to_jd(f"{date_from}T00:00:00Z")
-    jd_end = to_jd(f"{date_to}T00:00:00Z")
+    jd_end = _end_of_day_jd(date_to)
 
-    # Scan in 12-hour windows looking for aspect crossings.
-    # For conjunction (0°) and opposition (180°) the absolute angular_distance
-    # never changes sign, so we use a signed directional arc instead.
-    from astro_mcp.core.ephemeris_provider import calc_planet, angular_distance
+    # In transit-to-natal mode the natal point is fixed, so only the transiting
+    # body's speed decides how finely the range must be sampled.
+    moving = {planet1} if mode_resolved == "transit-to-natal" else {planet1, planet2}
+    scan_step = _scan_step_days(moving)
+    if (jd_end - jd_start) / scan_step > MAX_SCAN_SAMPLES:
+        raise AstroError(
+            "RANGE_TOO_LONG",
+            f"Scanning {date_from}..{date_to} at the resolution needed for "
+            f"{'/'.join(sorted(moving))} exceeds the sampling budget.",
+            hint="Shorten the date range.",
+        )
 
-    def _scan_diff(lon1: float, lon2_val: float, asp_angle: float) -> float:
-        """Signed value that crosses zero when the aspect is exact.
-        For Cnj/Opp uses directed arc; for all other aspects uses absolute distance."""
-        if asp_angle in (0.0, 180.0):
-            arc = (lon1 - lon2_val) % 360
-            diff = arc - asp_angle
-            if diff > 180:
-                diff -= 360
-            elif diff < -180:
-                diff += 360
-            return diff
-        return angular_distance(lon1, lon2_val) - asp_angle
-
-    occurrences = []
+    # --- Pass 1: locate every exact crossing in the range -------------------
+    crossings: list[tuple[float, bool]] = []   # (jd, retrograde_at_exactness)
+    prev_delta: float | None = None
     jd = jd_start
-    scan_step = 0.5  # 12-hour scan steps
-
-    prev_diff: float | None = None
-    window_start: float | None = None
-
-    while jd <= jd_end:
-        lon1, _ = calc_planet(jd, pid1)
-        if natal_lon2 is not None:
-            lon2 = natal_lon2
-        else:
-            lon2, _ = calc_planet(jd, pid2)  # type: ignore[arg-type]
-        diff = _scan_diff(lon1, lon2, asp_angle)
-
-        if prev_diff is not None and prev_diff * diff < 0 and abs(prev_diff - diff) < 270:
-            # Sign change → aspect is exact somewhere in [jd - scan_step, jd]
+    # Scan one step beyond the end so a perfection sitting in the final partial
+    # interval is still bracketed; crossings past jd_end are discarded below.
+    scan_limit = jd_end + scan_step
+    while jd <= scan_limit:
+        lon1, lon2 = _lon_at(jd, pid1, pid2, natal_lon2)
+        delta = aspect_delta(lon1, lon2, asp_angle)
+        if prev_delta is not None and prev_delta * delta < 0 and abs(prev_delta - delta) < 270:
             ex_jd = find_exact_aspect_jd(
-                pid1, pid2, asp_angle,
-                jd - scan_step, jd,
-                natal_lon2=natal_lon2,
+                pid1, pid2, asp_angle, jd - scan_step, jd, natal_lon2=natal_lon2
             )
-            if ex_jd:
-                exact_date = jd_to_iso(ex_jd)[:10]
-                # Find approach and separation dates within orb
-                approach_jd = ex_jd - 30  # rough
-                sep_jd = ex_jd + 30
-                for aj in range(int((ex_jd - jd_start) * 2)):
-                    test_jd = ex_jd - aj * 0.5
-                    tlon1, _ = calc_planet(test_jd, pid1)
-                    tlon2 = natal_lon2 if natal_lon2 is not None else calc_planet(test_jd, pid2)[0]  # type: ignore[arg-type]
-                    if abs(_scan_diff(tlon1, tlon2, asp_angle)) > orb:
-                        approach_jd = test_jd + 0.5
-                        break
-                for sj in range(120):
-                    test_jd = ex_jd + sj * 0.5
-                    if test_jd > jd_end:
-                        break
-                    tlon1, _ = calc_planet(test_jd, pid1)
-                    tlon2 = natal_lon2 if natal_lon2 is not None else calc_planet(test_jd, pid2)[0]  # type: ignore[arg-type]
-                    if abs(_scan_diff(tlon1, tlon2, asp_angle)) > orb:
-                        sep_jd = test_jd - 0.5
-                        break
-
-                occurrences.append({
-                    "approach_date": jd_to_iso(approach_jd)[:10],
-                    "exact_date": exact_date,
-                    "separation_date": jd_to_iso(sep_jd)[:10],
-                    "retrograde_exact": None,
-                    "direct_exact": exact_date,
-                    "is_triple_pass": False,
-                    "peak_orb": 0.01,
-                })
-                jd += 5  # skip past this occurrence
-
-        prev_diff = diff
+            if ex_jd is not None and jd_start <= ex_jd <= jd_end:
+                _, speed1 = calc_planet(ex_jd, pid1)
+                crossings.append((ex_jd, speed1 < 0))
+        prev_delta = delta
         jd += scan_step
+
+    # --- Pass 2: group crossings belonging to one retrograde loop -----------
+    groups: list[list[tuple[float, bool]]] = []
+    for crossing in crossings:
+        if groups and crossing[0] - groups[-1][-1][0] <= TRIPLE_PASS_WINDOW_DAYS:
+            groups[-1].append(crossing)
+        else:
+            groups.append([crossing])
+
+    occurrences: list[dict[str, Any]] = []
+    for group in groups:
+        first_jd = group[0][0]
+        last_jd = group[-1][0]
+
+        approach_jd = _orb_window(
+            first_jd, -1, orb, pid1, pid2, natal_lon2, jd_start, asp_angle, scan_step
+        )
+        separation_jd = _orb_window(
+            last_jd, +1, orb, pid1, pid2, natal_lon2, jd_end, asp_angle, scan_step
+        )
+
+        retro_dates = [jd_to_iso(j)[:10] for j, retro in group if retro]
+        direct_dates = [jd_to_iso(j)[:10] for j, retro in group if not retro]
+
+        occ: dict[str, Any] = {
+            "approach_date": jd_to_iso(approach_jd)[:10],
+            "exact_date": jd_to_iso(first_jd)[:10],
+            "exact_dates": [jd_to_iso(j)[:10] for j, _ in group],
+            "separation_date": jd_to_iso(separation_jd)[:10],
+            "retrograde_exact": retro_dates or None,
+            "direct_exact": direct_dates or None,
+            "passes": len(group),
+            "is_triple_pass": len(group) >= 3,
+        }
+        # Only meaningful when the bodies back away and return: every entry in
+        # ``group`` is an exact perfection, so a "tightest orb" would always be
+        # zero and tell the caller nothing.
+        if len(group) > 1:
+            occ["max_separation_orb"] = _max_separation(
+                group, pid1, pid2, natal_lon2, asp_angle
+            )
+        occurrences.append(occ)
 
     return {
         "planet1": planet1,
@@ -293,3 +366,51 @@ def find_aspect_exact_dates(
         "orb_used": orb,
         "occurrences": occurrences,
     }
+
+
+def _orb_window(
+    ex_jd: float,
+    direction: int,
+    orb: float,
+    pid1: int,
+    pid2: int | None,
+    natal_lon2: float | None,
+    limit_jd: float,
+    asp_angle: float,
+    step: float = DEFAULT_SCAN_STEP_DAYS,
+) -> float:
+    """First/last JD at which the aspect is still within ``orb`` of exact.
+
+    ``step`` must match the scan resolution: at 1 degree orb the Moon is only
+    in aspect for about three hours, which a half-day walk cannot resolve.
+    """
+    jd = ex_jd
+    while (limit_jd - jd) * direction > 0:
+        nxt = jd + direction * step
+        lon1, lon2 = _lon_at(nxt, pid1, pid2, natal_lon2)
+        if abs(aspect_delta(lon1, lon2, asp_angle)) > orb:
+            break
+        jd = nxt
+    return jd
+
+
+def _max_separation(
+    group: list[tuple[float, bool]],
+    pid1: int,
+    pid2: int | None,
+    natal_lon2: float | None,
+    asp_angle: float,
+) -> float:
+    """Widest orb reached *between* consecutive perfections in one loop.
+
+    Tells the caller how far the bodies pulled apart mid-retrograde before
+    coming back for the next pass.
+    """
+    widest = 0.0
+    for (jd_a, _), (jd_b, _) in pairwise(group):
+        steps = 24
+        for i in range(1, steps):
+            jd = jd_a + (jd_b - jd_a) * i / steps
+            lon1, lon2 = _lon_at(jd, pid1, pid2, natal_lon2)
+            widest = max(widest, abs(aspect_delta(lon1, lon2, asp_angle)))
+    return round(widest, 3)

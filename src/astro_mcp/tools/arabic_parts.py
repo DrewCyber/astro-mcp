@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.models import ChartPoint, SIGNS
-from astro_mcp.core.ephemeris_provider import build_chart_point, house_of
-from astro_mcp.tools.natal import calculate_natal_chart
-
+from astro_mcp.core.models import SIGNS, ChartPoint, HouseCusp
+from astro_mcp.tools.natal import compute_natal
 
 # ---------------------------------------------------------------------------
 # Arabic Part formulas: (name, day_formula_tokens, night_formula_tokens)
@@ -35,57 +34,43 @@ PART_FORMULAS: dict[str, tuple[str, str, str, str, str, str]] = {
 }
 
 
+_HOUSE_CUSP_CODES: dict[str, int] = {
+    "1st_cusp": 1, "2nd_cusp": 2, "3rd_cusp": 3, "4th_cusp": 4,
+    "5th_cusp": 5, "6th_cusp": 6, "7th_cusp": 7, "8th_cusp": 8,
+    "9th_cusp": 9, "10th_cusp": 10, "11th_cusp": 11, "12th_cusp": 12,
+}
+
+
 def _get_lon(
     code: str,
-    planets: dict[str, Any],
-    angles: dict[str, Any],
-    houses: list[Any],
+    planets: dict[str, ChartPoint],
+    angles: dict[str, ChartPoint],
+    houses: list[HouseCusp],
 ) -> float:
     """Resolve a planet/angle/house-cusp code to decimal longitude."""
-    def _extract_lon(obj: Any) -> float:
-        """Works for both ChartPoint objects and serialised dicts."""
-        if hasattr(obj, "lon_decimal"):
-            return obj.lon_decimal
-        return obj["deg"]
-
     if code in planets:
-        return _extract_lon(planets[code])
+        return planets[code].lon_decimal
     if code in angles:
-        return _extract_lon(angles[code])
-    # house cusp
-    house_map = {
-        "1st_cusp": 1, "2nd_cusp": 2, "3rd_cusp": 3, "4th_cusp": 4,
-        "5th_cusp": 5, "6th_cusp": 6, "7th_cusp": 7, "8th_cusp": 8,
-        "9th_cusp": 9, "10th_cusp": 10, "11th_cusp": 11, "12th_cusp": 12,
-    }
-    if code in house_map:
-        idx = house_map[code] - 1
+        return angles[code].lon_decimal
+    if code in _HOUSE_CUSP_CODES:
+        idx = _HOUSE_CUSP_CODES[code] - 1
         if idx < len(houses):
-            # houses[idx]["lon_decimal"] or parse from cusp string
-            hc = houses[idx]
-            if hasattr(hc, "lon_decimal"):
-                return hc.lon_decimal
-            # Serialised house dict — reconstruct from sign + DMS
-            return hc.get("lon_decimal", idx * 30.0)
+            return houses[idx].lon_decimal
     raise KeyError(f"Unknown chart point: {code}")
 
 
 def _compute_parts(
-    planets: dict[str, Any],
-    angles: dict[str, Any],
-    houses,
+    planets: dict[str, ChartPoint],
+    angles: dict[str, ChartPoint],
+    houses: list[HouseCusp],
     degree_format: str = "dms",
     parts: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Internal: compute Arabic parts from serialised planets/angles/houses."""
-    # Determine day/night (Sun above horizon = house 7-12 below horizon; Su in houses 7-12 = night)
+    """Internal: compute Arabic parts from natal chart points."""
+    # Determine day/night: the Sun in houses 7-12 is above the horizon (night
+    # chart is the complement).
     _su = planets.get("Su")
-    if _su is None:
-        su_house = 1
-    elif hasattr(_su, "house"):
-        su_house = _su.house or 1
-    else:
-        su_house = _su.get("house", 1)
+    su_house = (_su.house or 1) if _su is not None else 1
     is_day = su_house not in (7, 8, 9, 10, 11, 12)
 
     result: dict[str, Any] = {}
@@ -116,7 +101,7 @@ def _compute_parts(
 def calculate_arabic_parts(
     birth_date: str | None = None,
     birth_time: str | None = None,
-    birth_location: str | dict | None = None,
+    birth_location: str | dict[str, Any] | None = None,
     parts: list[str] | None = None,
     house_system: str = "P",
     degree_format: str = "dms",
@@ -124,18 +109,20 @@ def calculate_arabic_parts(
 ) -> dict[str, Any]:
     """Tool 11: Arabic (Hermetic) Parts / Lots."""
     if not (birth_date and birth_time and birth_location):
-        return {"error": True, "code": "NATAL_MISSING",
-                "message": "birth_date, birth_time and birth_location are required."}
-    natal = calculate_natal_chart(birth_date, birth_time, birth_location, house_system, degree_format)
+        raise AstroError(
+            "INPUT_ERROR",
+            "birth_date, birth_time and birth_location are required.",
+        )
+    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
 
-    su_house = natal["planets"].get("Su", {}).get("house", 1)
+    su_house = chart.planets["Su"].house or 1
     is_day = su_house not in (7, 8, 9, 10, 11, 12)
     chart_type = "day" if is_day else "night"
 
     result_parts = _compute_parts(
-        natal["planets"],
-        natal["angles"],
-        natal["houses"],
+        chart.planets,
+        chart.angles,
+        chart.houses,
         degree_format,
         parts,
     )
@@ -146,7 +133,10 @@ def calculate_arabic_parts(
     }
 
     if include_transits_date:
+        from astro_mcp.core.ephemeris_provider import angular_distance
+        from astro_mcp.core.models import ASPECT_ANGLES
         from astro_mcp.tools.transits import calculate_transits
+
         tr = calculate_transits(
             transit_date=include_transits_date,
             birth_date=birth_date,
@@ -156,15 +146,12 @@ def calculate_arabic_parts(
             degree_format=degree_format,
             max_orb=5.0,
         )
-        # Find transit planets near each lot
-        transit_activations: dict[str, list[dict]] = {}
+        transit_activations: dict[str, list[dict[str, Any]]] = {}
         for part_code, part_data in result_parts.items():
             part_lon = part_data.get("deg", 0.0)
-            activations = []
+            activations: list[dict[str, Any]] = []
             for tp_code, tp_data in tr.get("transit_planets", {}).items():
                 tp_lon = tp_data.get("deg", 0.0)
-                from astro_mcp.core.ephemeris_provider import angular_distance
-                from astro_mcp.core.models import ASPECT_ANGLES
                 for asp_name, asp_angle in ASPECT_ANGLES.items():
                     o = abs(angular_distance(tp_lon, part_lon) - asp_angle)
                     if o <= 3.0:
@@ -174,7 +161,7 @@ def calculate_arabic_parts(
                             "orb": round(o, 2),
                         })
             if activations:
-                activations.sort(key=lambda x: x["orb"])
+                activations.sort(key=lambda x: float(x["orb"]))
                 transit_activations[part_code] = activations
         if transit_activations:
             out["transit_activations"] = transit_activations

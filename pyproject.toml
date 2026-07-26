@@ -16,14 +16,12 @@ dependencies = [
     "timezonefinder>=6.5.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    "requests>=2.34.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
-    "httpx>=0.25.0",
     "ruff>=0.2.0",
     "mypy>=1.8.0",
     "pytest-cov>=4.1.0",
@@ -35,14 +33,34 @@ astro-mcp = "astro_mcp.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+astro_mcp = ["py.typed"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint]
+# Naive datetimes are load-bearing here: a birth time is a *wall-clock* local
+# time, and attaching a tzinfo before the DST-fold resolution in
+# geocoding.local_to_utc would defeat the ambiguity handling.
+ignore = ["DTZ001", "DTZ007", "FURB162"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["RUF059"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+# The MCP SDK ships untyped decorators (@server.list_tools / @server.call_tool),
+# so strict mode flags every handler they wrap. Scoped to the server module so
+# the rest of the package stays fully strict.
+[[tool.mypy.overrides]]
+module = "astro_mcp.server"
+disallow_untyped_decorators = false
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

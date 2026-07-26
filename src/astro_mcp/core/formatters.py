@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
+import re
 from typing import Any
 
-from astro_mcp.core.models import Aspect, ChartPoint, HouseCusp, SIGNS
+from astro_mcp.core.models import SIGNS, Aspect, ChartPoint, HouseCusp
 
+_DMS_RE = re.compile(r"(\d+)\u00b0(\d+)'(\d+)\"")
 
 # ---------------------------------------------------------------------------
 # Degree formatting
@@ -22,15 +23,9 @@ def decimal_to_dms(decimal_deg: float) -> str:
     return f"{deg:02d}\u00b0{minutes:02d}'{seconds:02d}\""
 
 
-def lon_to_dms_with_sign(lon_decimal: float, sign: str, sign_lon: float) -> str:
-    """Format as '24°45'12\"Pis'."""
-    return decimal_to_dms(sign_lon) + sign
-
-
 def dms_to_decimal(dms_str: str) -> float:
-    """Parse '24°45'12\"' to decimal degrees."""
-    import re
-    m = re.match(r"(\d+)\u00b0(\d+)'(\d+)\"", dms_str)
+    """Parse '24°45'12\"' to decimal degrees (inverse of decimal_to_dms)."""
+    m = _DMS_RE.match(dms_str)
     if not m:
         raise ValueError(f"Cannot parse DMS: {dms_str}")
     d, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -49,17 +44,17 @@ def serialize_point(
     """
     Compact planet dict for LLM output.
     Retrograde field included only when True (saves tokens).
-    """
-    if degree_format == "dms":
-        lon_str = decimal_to_dms(point.sign_lon) + point.sign
-    else:
-        lon_str = str(round(point.lon_decimal, 2))
 
+    In ``dms`` mode ``lon`` carries the human-readable degree string; in ``dec``
+    mode it is dropped entirely, because a stringified copy of ``deg`` is pure
+    duplication and invites consumers to parse a number out of a string.
+    """
     result: dict[str, Any] = {
-        "lon": lon_str,
         "sign": point.sign,
         "deg": round(point.lon_decimal, 2),
     }
+    if degree_format == "dms":
+        result = {"lon": decimal_to_dms(point.sign_lon) + point.sign, **result}
     if include_house and point.house is not None:
         result["house"] = point.house
     if point.retrograde:
