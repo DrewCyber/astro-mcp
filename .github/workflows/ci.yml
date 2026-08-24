@@ -5,13 +5,17 @@ on:
     branches: ["**"]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -48,4 +52,5 @@ jobs:
         run: mypy src
 
       - name: Test
-        run: pytest -q --cov=astro_mcp --cov-report=term-missing
+        # Coverage floor lives in pyproject addopts (--cov-fail-under=83).
+        run: pytest -q
