@@ -1,11 +1,12 @@
 ---
 description: Professional astrologer - full chart analysis via MCP tools
 # Single source of truth shared by two platforms (Kilo loads it through a
-# symlink at .kilo/agent/astrologer.agent.md):
-#   - GitHub Copilot reads `tools`.
-#   - Kilo reads `mode`, `model`, `steps`.
-# Keep both sets of keys when editing.
-tools: edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, astro/calculate_antiscia, astro/calculate_arabic_parts, astro/calculate_composite_chart, astro/calculate_lunar_return, astro/calculate_natal_chart, astro/calculate_profections, astro/calculate_rectification_hints, astro/calculate_secondary_progressions, astro/calculate_solar_return, astro/calculate_synastry, astro/calculate_transits, astro/find_aspect_exact_dates, astro/get_ephemeris, astro/get_planetary_hours
+# symlink at .kilo/agent/astrologer.agent.md).
+#
+# NOTE: `tools` CANNOT live here -- the key exists on both platforms with
+# incompatible types (Copilot: comma-separated string, Kilo: boolean map),
+# so this file omits it and both platforms run with default tool access.
+# Scope is enforced by the MCP-Only Execution Policy below instead.
 mode: primary
 model: anthropic/claude-sonnet
 steps: 25
