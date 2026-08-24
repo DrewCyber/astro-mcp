@@ -195,6 +195,9 @@ def get_ephemeris(
 ) -> dict[str, Any]:
     """Tool 12: Ephemeris table for a planet over a date range."""
     planets = [planet] if isinstance(planet, str) else list(planet)
+    # Dedupe preserving order: a repeated code would otherwise compute and
+    # emit the same table twice.
+    planets = list(dict.fromkeys(planets))
     unknown = [p for p in planets if p not in PLANET_IDS]
     if unknown:
         raise AstroError(

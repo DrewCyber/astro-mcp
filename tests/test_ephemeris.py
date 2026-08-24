@@ -152,6 +152,18 @@ def test_ephemeris_multi_planet_and_custom_hour_step():
     assert len(result["rows_by_planet"]["Mo"]) >= 8
 
 
+def test_ephemeris_dedupes_planet_lists():
+    """R-18: a repeated code must not compute or emit the same table twice."""
+    from astro_mcp.tools.ephemeris import get_ephemeris
+
+    result = get_ephemeris(
+        planet=["Su", "Su", "Mo"],
+        date_from="2024-03-01",
+        date_to="2024-03-01",
+    )
+    assert list(result["rows_by_planet"]) == ["Su", "Mo"]
+
+
 # --- Regression: R-4 node flavour inconsistency ----------------------------
 # With NODE_TYPE=mean, every tool must resolve "NN" to the MEAN node (swe id
 # 10); find_aspect_exact_dates used to scan the True Node regardless, mixing
