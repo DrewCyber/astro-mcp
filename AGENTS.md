@@ -55,6 +55,12 @@ Raise the coverage floor when coverage grows; never lower it.
 - Personal material lives in ignored dirs (`tmp/`, `private/`, `context/`,
   `.kilo/` are excluded locally). Never `git add` personal files.
 - Commit messages are prefixed with `ox-alpha` per owner preference.
-- Remaining known gap: behavioral tests for `tools/planetary_hours.py` and
-  dispatcher-level tests (unknown tool / error mapping through
-  `server.call_tool`). See `context/CODE_AUDIT.md`.
+
+## Regression anchors
+
+- Golden-chart pins for Einstein's natal live in
+  `tests/test_golden_einstein.py`: arcsecond longitudes, retrograde set,
+  historical LMT resolution. If a pin fails, treat it as an ephemeris/
+  flags/date-handling regression — do not re-pin without explanation.
+- Dispatcher contract is pinned in `tests/test_dispatcher.py`: every failure
+  path must return the structured JSON payload, never transport prose.

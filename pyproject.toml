@@ -82,4 +82,4 @@ disallow_untyped_calls = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=astro_mcp --cov-report=term-missing --cov-fail-under=83"
+addopts = "--cov=astro_mcp --cov-report=term-missing --cov-fail-under=87"
