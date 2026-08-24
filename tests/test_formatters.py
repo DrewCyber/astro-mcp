@@ -1,6 +1,6 @@
 """Tests for core/formatters.py."""
 
-from astro_mcp.core.formatters import decimal_to_dms, dms_to_decimal, to_compact_json
+from astro_mcp.core.formatters import decimal_to_dms, to_compact_json
 
 
 def test_decimal_to_dms_basic():
@@ -10,13 +10,6 @@ def test_decimal_to_dms_basic():
 def test_decimal_to_dms_zero():
     result = decimal_to_dms(0.0)
     assert result == "00°00'00\""
-
-
-def test_decimal_to_dms_roundtrip():
-    for original in [0.0, 5.5, 15.123, 29.9999]:
-        dms = decimal_to_dms(original)
-        back = dms_to_decimal(dms)
-        assert abs(back - original) < 0.001, f"Roundtrip failed for {original}: {dms} → {back}"
 
 
 def test_compact_json_no_whitespace():

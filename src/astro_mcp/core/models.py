@@ -3,23 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypedDict
-
-# ---------------------------------------------------------------------------
-# Input / wire types
-# ---------------------------------------------------------------------------
-
-class CoordDict(TypedDict):
-    lat: float
-    lon: float
-    tz: str
-
-
-class BirthData(TypedDict, total=False):
-    date: str          # "YYYY-MM-DD"
-    time: str          # "HH:MM" or "HH:MM:SS"
-    location: object   # str or CoordDict
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Resolved internal types
@@ -58,7 +42,6 @@ class Aspect:
     aspect_type: str     # "Cnj" | "Opp" | ...
     orb: float
     applying: bool
-    exact_date: str | None = None
 
 
 @dataclass

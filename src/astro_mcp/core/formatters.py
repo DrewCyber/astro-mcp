@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
-from astro_mcp.core.models import SIGNS, Aspect, ChartPoint, HouseCusp
-
-_DMS_RE = re.compile(r"(\d+)\u00b0(\d+)'(\d+)\"")
+from astro_mcp.core.ephemeris_provider import lon_to_sign_info
+from astro_mcp.core.models import Aspect, ChartPoint, HouseCusp
 
 # ---------------------------------------------------------------------------
 # Degree formatting
@@ -21,15 +19,6 @@ def decimal_to_dms(decimal_deg: float) -> str:
     minutes = int(rem)
     seconds = int((rem - minutes) * 60)
     return f"{deg:02d}\u00b0{minutes:02d}'{seconds:02d}\""
-
-
-def dms_to_decimal(dms_str: str) -> float:
-    """Parse '24°45'12\"' to decimal degrees (inverse of decimal_to_dms)."""
-    m = _DMS_RE.match(dms_str)
-    if not m:
-        raise ValueError(f"Cannot parse DMS: {dms_str}")
-    d, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    return d + mi / 60 + s / 3600
 
 
 # ---------------------------------------------------------------------------
@@ -62,21 +51,18 @@ def serialize_point(
     return result
 
 
-def serialize_aspect(asp: Aspect, include_exact: bool = True) -> dict[str, Any]:
-    d: dict[str, Any] = {
+def serialize_aspect(asp: Aspect) -> dict[str, Any]:
+    return {
         "p1": asp.point1,
         "p2": asp.point2,
         "asp": asp.aspect_type,
         "orb": asp.orb,
         "apply": asp.applying,
     }
-    if include_exact and asp.exact_date:
-        d["exact"] = asp.exact_date
-    return {k: v for k, v in d.items() if v is not None}
 
 
 def serialize_house(hc: HouseCusp, degree_format: str = "dms") -> dict[str, Any]:
-    sign, sign_lon = _lon_to_sign(hc.lon_decimal)
+    sign, sign_lon = lon_to_sign_info(hc.lon_decimal)
     if degree_format == "dms":
         cusp_str = decimal_to_dms(sign_lon) + sign
     else:
@@ -90,12 +76,6 @@ def serialize_house(hc: HouseCusp, degree_format: str = "dms") -> dict[str, Any]
     if hc.modern_ruler:
         d["mod_ruler"] = hc.modern_ruler
     return d
-
-
-def _lon_to_sign(lon: float) -> tuple[str, float]:
-    lon = lon % 360
-    idx = int(lon // 30)
-    return SIGNS[idx], lon % 30
 
 
 # ---------------------------------------------------------------------------
