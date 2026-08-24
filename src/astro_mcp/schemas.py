@@ -146,7 +146,10 @@ class ProgressionsInput(_BirthData):
     """Secondary progressions (day-for-a-year).
 
     Returns progressed planets and angles plus their aspects to the natal
-    chart. Optionally includes Solar Arc directions.
+    chart. Progressed Asc/MC use the quotidian convention (houses cast for
+    the progressed day at the birth place; angles advance ~360+1 deg/year,
+    labelled angles_method="quotidian") — not natal angle + solar arc.
+    Optionally includes Solar Arc directions.
     """
 
     progression_date: str = Field(description=DATE_DESC)

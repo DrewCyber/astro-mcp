@@ -34,6 +34,11 @@ def calculate_secondary_progressions(
     Secondary progressions: each day after birth = one year of life.
     Returns progressed planets, angles, and aspects to natal positions.
 
+    Progressed Asc/MC use the *quotidian* convention: houses are cast for the
+    progressed moment at the birth place, so angles advance ~360+1 deg per
+    year. They will not match software that reports natal angle + solar arc;
+    the payload labels this with ``angles_method: "quotidian"``.
+
     ``chart`` accepts a pre-built ``NatalChart`` so callers that already have
     one (rectification scores hundreds of candidate times) skip recomputing
     it; it wins over any birth_* arguments supplied alongside.
@@ -94,6 +99,13 @@ def calculate_secondary_progressions(
         "prog_date": progression_date,
         "prog_age": round(age_years, 2),
         "prog_day": prog_day_str,
+        # The progressed angles are the QUOTIDIAN angles of the progressed
+        # day: houses cast for prog_jd at the birth place, so they advance
+        # ~360+1 deg per year of life. This is a recognised convention but
+        # differs from Astro.com-style progressed MC/Asc (natal angle +
+        # solar arc), which users more often expect — hence the explicit
+        # label rather than bare numbers.
+        "angles_method": "quotidian",
         "prog_planets": prog_planets_out,
         "prog_to_natal_aspects": sorted(
             (
