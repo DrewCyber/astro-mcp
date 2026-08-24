@@ -1,5 +1,7 @@
 """Tests for get_ephemeris and find_aspect_exact_dates."""
 
+from datetime import date
+
 import pytest
 
 from astro_mcp.core.errors import AstroError
@@ -71,6 +73,51 @@ def test_find_aspect_new_moon_conjunction_detected():
     )
     assert "occurrences" in result
     assert len(result["occurrences"]) >= 1
+
+
+# --- Regression: R-2 fabricated multi-pass grouping -----------------------
+# Twelve lunations in 2026 are twelve INDEPENDENT conjunctions. The old
+# 200-day grouping window merged all of them into one bogus "triple pass"
+# claiming up to ~179 deg of mid-loop separation.
+
+def test_lunations_are_not_grouped_into_a_triple_pass():
+    from astro_mcp.tools.ephemeris import find_aspect_exact_dates
+
+    result = find_aspect_exact_dates(
+        planet1="Mo", planet2="Su", aspect="Cnj",
+        date_from="2026-01-01", date_to="2026-12-31",
+        mode="transit-to-transit",
+    )
+    occs = result["occurrences"]
+    assert len(occs) == 12
+    for occ in occs:
+        assert occ["is_triple_pass"] is False
+        assert occ["passes"] == 1
+        assert len(occ["exact_dates"]) == 1
+        # max_separation_orb only makes sense between passes of one loop.
+        assert "max_separation_orb" not in occ
+    # Exact dates must be roughly one synodic month apart.
+    dates = sorted(occ["exact_date"] for occ in occs)
+    for a, b in zip(dates, dates[1:]):
+        gap = (date.fromisoformat(b) - date.fromisoformat(a)).days
+        assert 24 <= gap <= 35, f"lunation gap {gap} days out of range"
+
+
+def test_transit_to_natal_moon_hits_are_independent_occurrences():
+    """Same defect class for transit-to-natal mode: monthly Moon hits over a
+    natal point must not merge into one occurrence."""
+    from astro_mcp.tools.ephemeris import find_aspect_exact_dates
+
+    result = find_aspect_exact_dates(
+        planet1="Mo", planet2="Su", aspect="Cnj",
+        date_from="2026-01-01", date_to="2026-06-30",
+        birth_date="1990-06-15", birth_time="12:00",
+        birth_location={"lat": 55.75, "lon": 37.62, "tz": "Europe/Moscow"},
+    )
+    occs = result["occurrences"]
+    assert len(occs) >= 5
+    for occ in occs:
+        assert occ["is_triple_pass"] is False
 
 
 def test_find_aspect_mode_requires_natal_context():

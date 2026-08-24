@@ -38,6 +38,14 @@ STEP_HOURS: dict[str, float] = {
 # for the slowest pairings.
 TRIPLE_PASS_WINDOW_DAYS = 200
 
+# Two exact hits are only folded into one occurrence when their gap also fits
+# inside half the pair's synodic cycle: within half a cycle the bodies cannot
+# complete a full lap of each other, so hits that close together belong to one
+# loop, while hits further apart are independent events (successive lunations,
+# successive Mercury retrogrades, ...). Without this cap every Moon aspect in a
+# year-long window collapsed into a single fabricated "triple pass".
+SYNODIC_GROUP_FRACTION = 0.5
+
 # The Moon covers ~13 degrees a day, so it can pass clean through an aspect --
 # and back out of orb -- inside a single coarse scan step. Every other body is
 # slow enough for the wide step.
@@ -62,6 +70,48 @@ def _end_of_day_jd(date_to: str) -> float:
 def _scan_step_days(moving: set[str]) -> float:
     """Scan resolution needed to avoid stepping over a perfection."""
     return FAST_SCAN_STEP_DAYS if moving & FAST_BODIES else DEFAULT_SCAN_STEP_DAYS
+
+
+def _mean_daily_motion(jd: float, pid: int) -> float:
+    """Average signed geocentric motion of a body over one year (deg/day).
+
+    Longitude wraps, so the year cannot be measured as one delta: it is
+    integrated from short arcs (5 days — under 180 degrees even for the Moon,
+    so each arc's wrapped increment is unambiguous). Sampling a full year lets
+    retrograde episodes cancel out, yielding the body's mean drift — exactly
+    what the synodic-period estimate needs.
+    """
+    step = 5.0
+    n = round(365.25 / step)
+    total = 0.0
+    jd_a = jd
+    for _ in range(n):
+        lon_a, _ = calc_planet(jd_a, pid)
+        jd_b = jd_a + step
+        lon_b, _ = calc_planet(jd_b, pid)
+        total += (((lon_b - lon_a + 180.0) % 360.0) - 180.0)
+        jd_a = jd_b
+    return total / (n * step)
+
+
+def _group_window_days(
+    jd_start: float,
+    pid1: int,
+    pid2: int | None,
+) -> float:
+    """Max gap between consecutive exact hits treated as ONE retrograde loop.
+
+    The 200-day window is only safe for slow pairs. For any faster pairing the
+    loop cap is tightened to ``SYNODIC_GROUP_FRACTION`` of the pair's synodic
+    cycle: hits closer than that cannot be separated by a complete lap, while
+    hits further apart are independent events.
+    """
+    rel_speed = abs(_mean_daily_motion(jd_start, pid1))
+    if pid2 is not None:
+        rel_speed = abs(rel_speed - _mean_daily_motion(jd_start, pid2))
+    if rel_speed < 1e-9:
+        return TRIPLE_PASS_WINDOW_DAYS
+    return min(TRIPLE_PASS_WINDOW_DAYS, SYNODIC_GROUP_FRACTION * 360.0 / rel_speed)
 
 
 def _resolve_step_days(step: str, interval_days: int | None, interval_hours: int | None) -> float:
@@ -231,7 +281,9 @@ def find_aspect_exact_dates(
 
     Groups crossings that belong to the same retrograde loop into a single
     occurrence so ``is_triple_pass`` and ``peak_orb`` describe the real event
-    rather than a placeholder.
+    rather than a placeholder. Grouping is synodic-aware: fast pairs (anything
+    involving the Moon or Mercury, say) produce independent occurrences per
+    crossing instead of one fabricated year-long "loop".
     """
     if planet1 not in PLANET_IDS:
         raise AstroError("UNKNOWN_PLANET", f"Unknown planet code: {planet1}")
@@ -317,9 +369,10 @@ def find_aspect_exact_dates(
         jd += scan_step
 
     # --- Pass 2: group crossings belonging to one retrograde loop -----------
+    group_window = _group_window_days(jd_start, pid1, pid2)
     groups: list[list[tuple[float, bool]]] = []
     for crossing in crossings:
-        if groups and crossing[0] - groups[-1][-1][0] <= TRIPLE_PASS_WINDOW_DAYS:
+        if groups and crossing[0] - groups[-1][-1][0] <= group_window:
             groups[-1].append(crossing)
         else:
             groups.append([crossing])
