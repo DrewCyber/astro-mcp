@@ -150,8 +150,20 @@ def _check_calc_flags(retflag: int, planet_id: int, jd: float) -> None:
 # ---------------------------------------------------------------------------
 
 def to_jd(dt_utc: str) -> float:
-    """Convert ISO-8601 UTC datetime string to Julian Day number (UT)."""
+    """Convert ISO-8601 UTC datetime string to Julian Day number (UT).
+
+    Non-UTC offsets are rejected rather than silently dropped: parsing them
+    and discarding tzinfo would compute the JD of the wall-clock time read as
+    UTC, shifting every downstream calculation by the offset.
+    """
     dt = datetime.fromisoformat(dt_utc.replace("Z", "+00:00"))
+    offset = dt.utcoffset()
+    if offset not in (None, timedelta(0)):
+        raise AstroError(
+            "INPUT_ERROR",
+            f"to_jd expects a UTC timestamp, got offset {offset}.",
+            hint="Convert to UTC first (suffix 'Z' or '+00:00').",
+        )
     return float(swe.julday(dt.year, dt.month, dt.day,
                             dt.hour + dt.minute / 60 + dt.second / 3600))
 

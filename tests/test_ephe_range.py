@@ -44,6 +44,19 @@ def test_in_range_date_does_not_raise():
     assert 0 <= lon < 360
 
 
+# --- R-13: to_jd must not silently drop non-UTC offsets ---------------------
+
+def test_to_jd_rejects_non_utc_offsets():
+    from astro_mcp.core.ephemeris_provider import to_jd
+
+    with pytest.raises(AstroError) as exc:
+        to_jd("2026-01-01T12:00:00+05:00")
+    assert exc.value.code == "INPUT_ERROR"
+    # Naive strings and explicit UTC forms stay accepted.
+    assert to_jd("2026-01-01T12:00:00") == to_jd("2026-01-01T12:00:00Z")
+    assert to_jd("2026-01-01T12:00:00+00:00") == to_jd("2026-01-01T12:00:00Z")
+
+
 def test_solar_return_schema_bounds_year_to_coverage():
     from pydantic import ValidationError
 
