@@ -14,7 +14,7 @@ from astro_mcp.core.ephemeris_provider import (
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ANGLE_KEYS, RULERS, SIGNS, ChartPoint, GeoLocation
+from astro_mcp.core.models import ANGLE_KEYS, RULERS, SIGNS, ChartPoint, GeoLocation, NatalChart
 
 # ---------------------------------------------------------------------------
 # Significator mapping per event type
@@ -90,23 +90,46 @@ def profection_for_age(asc_lon: float, age_years: int) -> tuple[int, float, str]
     return prof_sign_idx, prof_sign_idx * 30.0, RULERS[SIGNS[prof_sign_idx]][0]
 
 
-def _score_candidate(
-    candidate_time: str,
-    birth_date: str,
-    birth_location: str | dict[str, Any],
-    geo: GeoLocation,
+def _transit_charts_for_events(
     events: list[dict[str, Any]],
+    geo: GeoLocation,
     house_system: str,
+) -> dict[str, dict[str, ChartPoint]]:
+    """Transiting positions at each event's local noon, computed once per call.
+
+    Transits at a given date do not depend on the candidate birth time (only
+    the natal side of the aspect does), so building them once instead of once
+    per candidate removes the largest redundant chunk of work from scans.
+    """
+    hs, _ = resolve_house_system(house_system, geo.lat)
+    charts: dict[str, dict[str, ChartPoint]] = {}
+    for event in events:
+        event_date = event["date"]
+        if event_date in charts:
+            continue
+        utc_str, _ = local_to_utc(event_date, "12:00", geo.tz)
+        jd_tr = to_jd(utc_str)
+        cusps_tr, _ = calc_houses(jd_tr, geo.lat, geo.lon, hs)
+        charts[event_date] = calc_all_planets(
+            jd_tr, cusps_tr,
+            include_asteroids=False,
+            include_lilith=True, include_chiron=True,
+        )
+    return charts
+
+
+def _score_candidate(
+    chart: NatalChart,
+    birth_date: str,
+    events: list[dict[str, Any]],
     techniques: list[str],
+    transit_charts: dict[str, dict[str, ChartPoint]],
 ) -> tuple[float, list[dict[str, Any]]]:
-    """Build the chart for one candidate time and score it against all events.
+    """Score one pre-built candidate chart against all events.
 
     Only time-sensitive natal points contribute to the score; see
     :data:`TIME_SENSITIVE_POINTS`.
     """
-    from astro_mcp.tools.natal import compute_natal
-
-    chart = compute_natal(birth_date, candidate_time, birth_location, house_system)
     natal_points: dict[str, ChartPoint] = {
         code: pt for code, pt in chart.all_points.items()
         if code in TIME_SENSITIVE_POINTS
@@ -119,22 +142,11 @@ def _score_candidate(
         event_date = event["date"]
         event_type = event.get("type", "other")
 
-        # One transit chart per event serves both the transits technique and
-        # the profections year-lord checks.
         tr_planets: dict[str, ChartPoint] | None = None
         if "transits" in techniques or "profections" in techniques:
-            utc_str, _ = local_to_utc(event_date, "12:00", geo.tz)
-            jd_tr = to_jd(utc_str)
-            hs, _ = resolve_house_system(house_system, geo.lat)
-            cusps_tr, _ = calc_houses(jd_tr, geo.lat, geo.lon, hs)
-            tr_planets = calc_all_planets(
-                jd_tr, cusps_tr,
-                include_asteroids=False,
-                include_lilith=True, include_chiron=True,
-            )
+            tr_planets = transit_charts[event_date]
 
-        if "transits" in techniques:
-            assert tr_planets is not None
+        if "transits" in techniques and tr_planets is not None:
             raw_asps = find_aspects(
                 tr_planets, natal_points,
                 angle_orb_keys=set(ANGLE_KEYS),
@@ -154,8 +166,7 @@ def _score_candidate(
                     })
                     total_score += corr_score
 
-        if "profections" in techniques:
-            assert tr_planets is not None
+        if "profections" in techniques and tr_planets is not None:
             age = completed_years(birth_date, event_date)
             prof_sign_idx, prof_cusp_lon, lord = profection_for_age(
                 chart.angles["Asc"].lon_decimal, age
@@ -220,13 +231,11 @@ def _score_candidate(
         if "progressions" in techniques:
             from astro_mcp.tools.progressions import calculate_secondary_progressions
             prog = calculate_secondary_progressions(
-                birth_date=birth_date,
-                birth_time=candidate_time,
-                birth_location=birth_location,
                 progression_date=event_date,
-                house_system=house_system,
                 degree_format="dec",
                 max_orb=MAX_ORB,
+                chart=chart,
+                birth_date=birth_date,
             )
             for asp in prog.get("prog_to_natal_aspects", []):
                 if asp.get("p2") not in TIME_SENSITIVE_POINTS:
@@ -283,13 +292,15 @@ def calculate_rectification_hints(
     techniques = techniques or ["transits", "progressions", "profections"]
     geo = resolve_location(birth_location)
 
+    from astro_mcp.tools.natal import compute_natal
+
     # --- Verification mode: score a single pre-known birth_time ---
     if birth_time:
-        from astro_mcp.tools.natal import compute_natal
-        score, correlations = _score_candidate(
-            birth_time, birth_date, birth_location, geo, events, house_system, techniques
-        )
         chart = compute_natal(birth_date, birth_time, birth_location, house_system)
+        transit_charts = _transit_charts_for_events(events, geo, house_system)
+        score, correlations = _score_candidate(
+            chart, birth_date, events, techniques, transit_charts
+        )
         return {
             "mode": "verification",
             "time": birth_time,
@@ -338,15 +349,16 @@ def calculate_rectification_hints(
         candidates_times.append(t.strftime(fmt))
         t += timedelta(minutes=time_step_min)
 
-    from astro_mcp.tools.natal import compute_natal
+    # Transit charts depend only on the event dates: build them once.
+    transit_charts = _transit_charts_for_events(events, geo, house_system)
 
     scored: list[dict[str, Any]] = []
     scores: list[float] = []
     for ctime in candidates_times:
-        score, correlations = _score_candidate(
-            ctime, birth_date, birth_location, geo, events, house_system, techniques
-        )
         chart = compute_natal(birth_date, ctime, birth_location, house_system)
+        score, correlations = _score_candidate(
+            chart, birth_date, events, techniques, transit_charts
+        )
         scores.append(score)
         scored.append({
             "time": ctime,

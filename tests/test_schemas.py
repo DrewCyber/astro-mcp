@@ -32,6 +32,11 @@ def test_model_fields_are_accepted_by_the_tool(name: str) -> None:
     assert not unknown, f"{name}: schema advertises parameters the function rejects: {unknown}"
 
 
+# Parameters that exist only for internal callers (pre-built charts, caches)
+# and are deliberately not part of the MCP wire contract.
+INTERNAL_PARAMS = frozenset({"chart"})
+
+
 @pytest.mark.parametrize("name", sorted(TOOL_INPUTS))
 def test_tool_parameters_are_all_documented(name: str) -> None:
     """No function parameter may be missing from the schema.
@@ -40,7 +45,7 @@ def test_tool_parameters_are_all_documented(name: str) -> None:
     find_aspect_exact_dates.degree_format and calculate_antiscia.orb /
     include_contra existed in code but were undocumented.
     """
-    params = _signature_params(name)
+    params = set(_signature_params(name)) - INTERNAL_PARAMS
     undocumented = set(params) - set(TOOL_INPUTS[name].model_fields)
     assert not undocumented, f"{name}: parameters missing from the schema: {undocumented}"
 

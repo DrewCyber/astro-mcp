@@ -15,7 +15,7 @@ from astro_mcp.core.ephemeris_provider import (
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.models import ANGLE_KEYS, ChartPoint
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart
 from astro_mcp.tools.natal import compute_natal, dedupe_aspects
 
 
@@ -28,20 +28,31 @@ def calculate_secondary_progressions(
     house_system: str = "P",
     degree_format: str = "dms",
     max_orb: float | None = 3.0,
+    chart: NatalChart | None = None,
 ) -> dict[str, Any]:
     """
     Secondary progressions: each day after birth = one year of life.
     Returns progressed planets, angles, and aspects to natal positions.
+
+    ``chart`` accepts a pre-built ``NatalChart`` so callers that already have
+    one (rectification scores hundreds of candidate times) skip recomputing
+    it; it wins over any birth_* arguments supplied alongside.
     """
-    if not (birth_date and birth_time and birth_location):
-        raise AstroError(
-            "INPUT_ERROR",
-            "birth_date, birth_time and birth_location are required.",
-        )
+    if chart is None:
+        if not (birth_date and birth_time and birth_location):
+            raise AstroError(
+                "INPUT_ERROR",
+                "birth_date, birth_time and birth_location are required.",
+            )
+        chart = compute_natal(birth_date, birth_time, birth_location, house_system)
+    else:
+        birth_date = birth_date or str(chart.meta.get("birth_date", ""))
     if not progression_date:
         raise AstroError("INPUT_ERROR", "progression_date is required.")
-
-    chart = compute_natal(birth_date, birth_time, birth_location, house_system)
+    if not birth_date:
+        raise AstroError(
+            "INPUT_ERROR", "birth_date is required to measure the progression age."
+        )
 
     # Age is measured from the *local* birth date the caller supplied; the UTC
     # timestamp can land on the neighbouring day for births near midnight.
