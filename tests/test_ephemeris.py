@@ -150,3 +150,44 @@ def test_ephemeris_multi_planet_and_custom_hour_step():
     assert "Mo" in result["rows_by_planet"]
     assert "Su" in result["rows_by_planet"]
     assert len(result["rows_by_planet"]["Mo"]) >= 8
+
+
+# --- Regression: R-4 node flavour inconsistency ----------------------------
+# With NODE_TYPE=mean, every tool must resolve "NN" to the MEAN node (swe id
+# 10); find_aspect_exact_dates used to scan the True Node regardless, mixing
+# definitions that sit up to ~1.7 deg apart.
+
+def test_pid_for_honours_node_setting(monkeypatch):
+    from astro_mcp.config import settings
+    from astro_mcp.core.ephemeris_provider import pid_for
+    from astro_mcp.core.models import PLANET_IDS
+
+    monkeypatch.setattr(settings, "node_type", "true")
+    assert pid_for("NN") == PLANET_IDS["NN"]      # true node, id 11
+    monkeypatch.setattr(settings, "node_type", "mean")
+    assert pid_for("NN") == PLANET_IDS["NN_m"]    # mean node, id 10
+    assert pid_for("SN") == PLANET_IDS["SN"]
+    assert pid_for("Su") == 0
+
+
+def test_ephemeris_table_matches_configured_node_flavour(monkeypatch):
+    from astro_mcp.config import settings
+    from astro_mcp.core.ephemeris_provider import calc_planet, to_jd
+    from astro_mcp.core.models import PLANET_IDS
+    from astro_mcp.tools.ephemeris import get_ephemeris
+
+    jd = to_jd("2026-01-01T00:00:00Z")
+    for node_type in ("true", "mean"):
+        monkeypatch.setattr(settings, "node_type", node_type)
+        flavour_id = PLANET_IDS["NN_m"] if node_type == "mean" else PLANET_IDS["NN"]
+        ref_lon, _ = calc_planet(jd, flavour_id)
+        row = get_ephemeris("NN", "2026-01-01", "2026-01-01")["rows"][0]
+        assert abs((row["deg"] - ref_lon % 360 + 180) % 360 - 180) < 0.01
+
+
+def test_transits_share_the_same_node_resolver():
+    # The tools must not carry their own key->id logic (R-4).
+    from astro_mcp.core.ephemeris_provider import pid_for
+    from astro_mcp.tools.transits import _pid
+
+    assert _pid is pid_for or (_pid("NN") == pid_for("NN"))

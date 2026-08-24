@@ -14,6 +14,7 @@ from astro_mcp.core.ephemeris_provider import (
     find_exact_aspect_jd,
     jd_to_iso,
     lon_to_sign_info,
+    pid_for,
     to_jd,
 )
 from astro_mcp.core.errors import AstroError
@@ -149,7 +150,7 @@ def _build_ephemeris_rows(
     include_retrograde: bool,
     degree_format: str,
 ) -> list[dict[str, Any]]:
-    pid = PLANET_IDS[planet]
+    pid = pid_for(planet)
     jd_start = to_jd(f"{date_from}T00:00:00Z")
     jd_end = _end_of_day_jd(date_to)
 
@@ -297,7 +298,7 @@ def find_aspect_exact_dates(
         raise AstroError("INPUT_ERROR", "orb must be greater than 0.")
 
     asp_angle = ASPECT_ANGLES[aspect]
-    pid1 = PLANET_IDS[planet1]
+    pid1 = pid_for(planet1)
 
     natal_lon2: float | None = None
     pid2: int | None = None
@@ -324,7 +325,7 @@ def find_aspect_exact_dates(
             raise AstroError("UNKNOWN_PLANET", f"Unknown natal point: {planet2}")
         natal_lon2 = point.lon_decimal
     elif planet2 in PLANET_IDS:
-        pid2 = PLANET_IDS[planet2]
+        pid2 = pid_for(planet2)
     else:
         raise AstroError("UNKNOWN_PLANET", f"Unknown planet code: {planet2}")
 

@@ -36,6 +36,20 @@ _CALC_FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
 swe.set_ephe_path(settings.ephe_path)
 
 
+def pid_for(key: str) -> int:
+    """Swiss Ephemeris id for a chart key, honouring the mean/true node setting.
+
+    ``calc_all_planets`` stores both node flavours under the canonical key
+    ``NN``, so any *chart-key -> swe id* lookup must go through here: looking
+    ids up naively scans the True Node even when ``NODE_TYPE`` selected the
+    Mean one. The two flavours sit up to ~1.7 deg apart, so mixing them makes
+    transit-to-natal node contacts appear and disappear between tools.
+    """
+    if key == "NN" and settings.use_mean_node:
+        return PLANET_IDS["NN_m"]
+    return PLANET_IDS[key]
+
+
 def init_ephemeris(ephe_path: str | None = None) -> None:
     """Point Swiss Ephemeris at the data files and fail fast if they're absent.
 

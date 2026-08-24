@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import date as Date
 from typing import Any
 
-from astro_mcp.config import settings
 from astro_mcp.core.ephemeris_provider import (
     aspect_delta,
     calc_all_planets,
@@ -13,6 +12,7 @@ from astro_mcp.core.ephemeris_provider import (
     find_aspects,
     find_exact_aspect_jd,
     jd_to_iso,
+    pid_for,
     to_jd,
 )
 from astro_mcp.core.errors import AstroError
@@ -44,15 +44,8 @@ EXACT_SEARCH_DAYS = 200
 
 
 def _pid(key: str) -> int:
-    """Swiss Ephemeris id for a chart key, honouring the mean/true node setting.
-
-    ``calc_all_planets`` stores both node flavours under the canonical key
-    ``NN``, so looking the id up naively would scan the true node even when the
-    chart was built from the mean one.
-    """
-    if key == "NN" and settings.use_mean_node:
-        return PLANET_IDS["NN_m"]
-    return PLANET_IDS[key]
+    """Deprecated alias; the canonical resolver lives in ephemeris_provider."""
+    return pid_for(key)
 
 
 def _transit_snapshot(

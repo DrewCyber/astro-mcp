@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import date as Date
 from typing import Any
 
-from astro_mcp.core.ephemeris_provider import build_chart_point, calc_planet, to_jd
+from astro_mcp.core.ephemeris_provider import build_chart_point, calc_planet, pid_for, to_jd
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.models import PLANET_IDS, RULERS, SIGNS
+from astro_mcp.core.models import RULERS, SIGNS
 from astro_mcp.tools.natal import compute_natal
 
 ORDINALS = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th",
@@ -78,7 +78,7 @@ def calculate_profections(
     )
 
     jd_target = to_jd(f"{target_date}T12:00:00Z")
-    lon, speed = calc_planet(jd_target, PLANET_IDS[year_ruler])
+    lon, speed = calc_planet(jd_target, pid_for(year_ruler))
     transit_ruler_pos = serialize_point(
         build_chart_point(lon, speed), degree_format, include_house=False
     )
