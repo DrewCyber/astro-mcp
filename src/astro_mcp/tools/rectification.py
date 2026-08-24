@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
@@ -14,7 +14,7 @@ from astro_mcp.core.ephemeris_provider import (
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, GeoLocation
+from astro_mcp.core.models import ANGLE_KEYS, RULERS, SIGNS, ChartPoint, GeoLocation
 
 # ---------------------------------------------------------------------------
 # Significator mapping per event type
@@ -67,6 +67,29 @@ def score_event_match(orb: float, aspect_type: str, technique: str) -> float:
     return base * orb_factor * technique_weights.get(technique, 1.0)
 
 
+def completed_years(birth_date: str, event_date: str) -> int:
+    """Whole years of life completed by the event date (profection counter)."""
+    b = date.fromisoformat(birth_date)
+    e = date.fromisoformat(event_date)
+    years = e.year - b.year
+    if (e.month, e.day) < (b.month, b.day):
+        years -= 1
+    return max(0, years)
+
+
+def profection_for_age(asc_lon: float, age_years: int) -> tuple[int, float, str]:
+    """Profected sign for an age, from the candidate's Ascendant.
+
+    Returns ``(sign_index, profected_cusp_longitude, year_lord_code)``.
+    Annual profections advance one whole sign per completed year of life,
+    starting from the rising sign at age 0; the year lord is the sign's
+    traditional ruler.
+    """
+    asc_sign_idx = int(asc_lon % 360 // 30)
+    prof_sign_idx = (asc_sign_idx + age_years % 12) % 12
+    return prof_sign_idx, prof_sign_idx * 30.0, RULERS[SIGNS[prof_sign_idx]][0]
+
+
 def _score_candidate(
     candidate_time: str,
     birth_date: str,
@@ -96,7 +119,10 @@ def _score_candidate(
         event_date = event["date"]
         event_type = event.get("type", "other")
 
-        if "transits" in techniques:
+        # One transit chart per event serves both the transits technique and
+        # the profections year-lord checks.
+        tr_planets: dict[str, ChartPoint] | None = None
+        if "transits" in techniques or "profections" in techniques:
             utc_str, _ = local_to_utc(event_date, "12:00", geo.tz)
             jd_tr = to_jd(utc_str)
             hs, _ = resolve_house_system(house_system, geo.lat)
@@ -106,6 +132,9 @@ def _score_candidate(
                 include_asteroids=False,
                 include_lilith=True, include_chiron=True,
             )
+
+        if "transits" in techniques:
+            assert tr_planets is not None
             raw_asps = find_aspects(
                 tr_planets, natal_points,
                 angle_orb_keys=set(ANGLE_KEYS),
@@ -124,6 +153,69 @@ def _score_candidate(
                         "score": round(corr_score, 2),
                     })
                     total_score += corr_score
+
+        if "profections" in techniques:
+            assert tr_planets is not None
+            age = completed_years(birth_date, event_date)
+            prof_sign_idx, prof_cusp_lon, lord = profection_for_age(
+                chart.angles["Asc"].lon_decimal, age
+            )
+            prof_sign = SIGNS[prof_sign_idx]
+
+            # Target set anchored on the candidate's Ascendant sign, so it
+            # moves with the birth time exactly as a profection does:
+            # - the profected house cusp (start of the profected sign);
+            # - the natal year lord, when that point is time-sensitive.
+            targets: dict[str, ChartPoint] = {
+                f"{prof_sign}_cusp": ChartPoint(
+                    prof_cusp_lon, prof_sign, 0.0, None, False, 0.0
+                ),
+            }
+            lord_pt = chart.planets.get(lord)
+            if lord_pt is not None and lord in TIME_SENSITIVE_POINTS:
+                targets[lord] = ChartPoint(
+                    lord_pt.lon_decimal, lord_pt.sign, lord_pt.sign_lon,
+                    None, lord_pt.retrograde, lord_pt.speed,
+                )
+
+            for asp in find_aspects(tr_planets, targets, angle_orb_keys=set(targets)):
+                if asp.orb > MAX_ORB:
+                    continue
+                corr_score = score_event_match(asp.orb, asp.aspect_type, "profections")
+                if corr_score > 1:
+                    correlations.append({
+                        "event_date": event_date,
+                        "event_type": event_type,
+                        "technique": "profections",
+                        "age_year_lord": lord,
+                        "profected_sign": prof_sign,
+                        "indicators": [{"planet": asp.point1, "asp": asp.aspect_type,
+                                        "point": asp.point2, "orb": round(asp.orb, 2)}],
+                        "score": round(corr_score, 2),
+                    })
+                    total_score += corr_score
+
+            # The year lord's own transit condition describes its year: score
+            # the transiting lord against the candidate's angles and Moon.
+            tr_lord = tr_planets.get(lord)
+            if tr_lord is not None:
+                for asp in find_aspects({lord: tr_lord}, natal_points,
+                                        angle_orb_keys=set(ANGLE_KEYS)):
+                    if asp.orb > MAX_ORB:
+                        continue
+                    corr_score = score_event_match(asp.orb, asp.aspect_type, "profections")
+                    if corr_score > 1:
+                        correlations.append({
+                            "event_date": event_date,
+                            "event_type": event_type,
+                            "technique": "profections",
+                            "age_year_lord": lord,
+                            "profected_sign": prof_sign,
+                            "indicators": [{"planet": lord, "asp": asp.aspect_type,
+                                            "point": asp.point2, "orb": round(asp.orb, 2)}],
+                            "score": round(corr_score, 2),
+                        })
+                        total_score += corr_score
 
         if "progressions" in techniques:
             from astro_mcp.tools.progressions import calculate_secondary_progressions
