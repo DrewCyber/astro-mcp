@@ -291,11 +291,10 @@ def calculate_transits(
                 if include_moon_events is not None
                 else (
                     f"Lunar events omitted: beyond {MOON_EVENT_MAX_DAYS} days the Moon "
-                    f"contacts every natal point and would dominate the list. Pass "
-                    f"include_moon_events=true, or query a shorter period, to see them."
+                    "contacts every natal point and would dominate the list. Pass "
+                    "include_moon_events=true, or query a shorter period, to see them."
                 )
-            )
-        # Events are reported for whole calendar days (UTC) starting on
+            )        # Events are reported for whole calendar days (UTC) starting on
         # transit_date, not for a window hanging off the transit moment.
         result["aspect_events"] = _scan_aspect_events(
             natal_points, to_jd(f"{transit_date}T00:00:00Z"), period_days, event_keys

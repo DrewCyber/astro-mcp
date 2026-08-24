@@ -41,9 +41,13 @@ VOC_BODIES: tuple[str, ...] = ("Su", "Me", "Ve", "Ma", "Ju", "Sa")
 VOC_ASPECTS: dict[str, float] = {"Cnj": 0.0, "Sex": 60.0, "Squ": 90.0, "Tri": 120.0,
                                  "Opp": 180.0}
 
-# The Moon clears a sign in ~2.2 days; 3 gives comfortable headroom.
+# --- Scan-resolution constants (shared by the VOC and lunation scanners) ----
+# The Moon clears a sign in ~2.2 days; 3 gives comfortable headroom for the
+# sign-ingress search.
 _MAX_SIGN_DAYS = 3.0
-# 3 hours. The Moon moves ~1.6 deg per step, fine for bracketing a crossing.
+# 3-hour sampling: the Moon moves ~1.6 deg per step, fine for bracketing a
+# sign or aspect crossing without stepping over one. A synodic month is
+# 29.53 days, so the lunation window below always contains one of each.
 _SCAN_STEP = 1 / 8
 
 

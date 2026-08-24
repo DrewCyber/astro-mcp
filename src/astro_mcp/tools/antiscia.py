@@ -1,4 +1,4 @@
-"""Tool 15: calculate_antiscia."""
+"""Tool 14: calculate_antiscia."""
 
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ def calculate_antiscia(
     include_contra: bool = True,
     include_transits_date: str | None = None,
 ) -> dict[str, Any]:
-    """Tool 15: Antiscia and contra-antiscia points plus their natal contacts."""
+    """Tool 14: Antiscia and contra-antiscia points plus their natal contacts."""
     if not (birth_date and birth_time and birth_location):
         raise AstroError(
             "INPUT_ERROR",
