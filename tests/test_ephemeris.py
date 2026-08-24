@@ -1,6 +1,7 @@
 """Tests for get_ephemeris and find_aspect_exact_dates."""
 
 from datetime import date
+from itertools import pairwise
 
 import pytest
 
@@ -98,7 +99,7 @@ def test_lunations_are_not_grouped_into_a_triple_pass():
         assert "max_separation_orb" not in occ
     # Exact dates must be roughly one synodic month apart.
     dates = sorted(occ["exact_date"] for occ in occs)
-    for a, b in zip(dates, dates[1:]):
+    for a, b in pairwise(dates):
         gap = (date.fromisoformat(b) - date.fromisoformat(a)).days
         assert 24 <= gap <= 35, f"lunation gap {gap} days out of range"
 
