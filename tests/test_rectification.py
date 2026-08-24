@@ -91,3 +91,37 @@ def test_too_few_events_rejected():
             events=[{"date": "2015-06-15", "type": "marriage"}],
         )
     assert exc.value.code == "TOO_FEW_EVENTS"
+
+
+def test_non_exact_events_do_not_influence_scores():
+    """R-11 regression: month/year-accuracy events were scored although the
+    tool promises they 'do not count'."""
+    from astro_mcp.tools.rectification import calculate_rectification_hints
+
+    base = calculate_rectification_hints(**BIRTH, birth_time="12:00", events=EVENTS)
+    padded = calculate_rectification_hints(
+        **BIRTH,
+        birth_time="12:00",
+        events=EVENTS + [
+            {"date": "2001-01-01", "type": "career_rise", "date_accuracy": "year"},
+            {"date": "2012-07-01", "type": "relocation", "date_accuracy": "month"},
+        ],
+    )
+    assert padded["score"] == base["score"]
+    dates = {c["event_date"] for c in base["correlations"]}
+    assert "2001-01-01" not in dates and "2012-07-01" not in dates
+    # Fuzzy-only supply must still be rejected even though 5 events were given.
+    import pytest
+
+    from astro_mcp.core.errors import AstroError
+
+    with pytest.raises(AstroError) as exc:
+        calculate_rectification_hints(
+            **BIRTH,
+            birth_time="12:00",
+            events=[
+                {"date": "2001-01-01", "type": "career_rise", "date_accuracy": "year"},
+                {"date": "2012-07-01", "type": "relocation", "date_accuracy": "month"},
+            ],
+        )
+    assert exc.value.code == "TOO_FEW_EVENTS"

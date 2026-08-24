@@ -268,12 +268,15 @@ def calculate_rectification_hints(
     single call and carry no absolute meaning.
     """
     events = events or []
-    exact_events = [e for e in events if e.get("date_accuracy", "exact") == "exact"]
-    if len(exact_events) < MIN_EVENTS:
+    # Only exactly-known dates are scored, matching the documented contract:
+    # the hint below promises fuzzy events "do not count", so they must not
+    # silently drive the ranking either.
+    events = [e for e in events if e.get("date_accuracy", "exact") == "exact"]
+    if len(events) < MIN_EVENTS:
         raise AstroError(
             "TOO_FEW_EVENTS",
             f"Provide at least {MIN_EVENTS} events with exactly known dates "
-            f"(got {len(exact_events)}).",
+            f"(got {len(events)}).",
             hint="Events with date_accuracy other than 'exact' do not count.",
         )
 
