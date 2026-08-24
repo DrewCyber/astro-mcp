@@ -27,7 +27,7 @@ Implements 14 tools backed by Swiss Ephemeris (`pyswisseph`) and integrates with
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-org/astro-mcp
+git clone https://github.com/DrewCyber/astro-mcp
 cd astro-mcp
 
 # 2. Create virtual environment
@@ -79,7 +79,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `GEOCODE_CACHE_SIZE` | `512` | LRU cache size for geocoding results |
 | `GEOCODE_CACHE_PATH` | `~/.cache/astro-mcp/geocode.json` | Persistent geocode cache so lookups survive a restart. Stores only city → lat/lon/tz. Set empty to disable |
 | `DEFAULT_HOUSE_SYSTEM` | `P` | `P`=Placidus, `W`=Whole Sign, `K`=Koch |
-| `DEFAULT_ORB_FACTOR` | `1.0` | Global orb multiplier (0.5–1.5) |
+| `DEFAULT_ORB_FACTOR` | `1.0` | Global orb multiplier (0.1–3.0) |
 | `NODE_TYPE` | `true` | `true`=True Node, `mean`=Mean Node (applied consistently across all tools) |
 | `LOG_LEVEL` | `WARNING` | Python logging level |
 
@@ -137,8 +137,9 @@ Supported codes across tools:
 - `Pl` Pluto
 - `Ch` Chiron
 - `Li` Black Moon Lilith (Mean Apogee)
-- `NN` North Node (True Node)
+- `NN` North Node (True Node by default; Mean Node when `NODE_TYPE=mean`)
 - `SN` South Node
+- Asteroids (where `include_asteroids` is supported): `Ce` Ceres, `Pa` Pallas, `Jun` Juno, `Ves` Vesta
 
 ## API Notes
 
@@ -156,7 +157,7 @@ Supported codes across tools:
 pytest tests/ -v --cov=src/astro_mcp --cov-report=term-missing
 ```
 
-Reference charts (`tests/reference_data/`) are verified against Astro.com and Solar Fire.
+Golden-chart regressions live inline in the test suite (`tests/test_audit_regressions.py`) and were verified against Astro.com and Solar Fire.
 
 ## License
 
