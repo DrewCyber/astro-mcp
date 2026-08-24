@@ -194,6 +194,13 @@ def lon_to_sign_info(lon: float) -> tuple[str, float]:
 
 def house_of(lon: float, cusps: list[float]) -> int:
     """Return house number (1-12) for a given longitude and house cusps list."""
+    if len(cusps) != 12:
+        # A short cusp list would silently place everything in house 1; the
+        # caller deserves the error at the source instead.
+        raise AstroError(
+            "HOUSE_CALC_FAILED",
+            f"house_of expects 12 cusps, got {len(cusps)}.",
+        )
     lon = lon % 360
     for i in range(12):
         cusp_start = cusps[i] % 360
@@ -204,7 +211,7 @@ def house_of(lon: float, cusps: list[float]) -> int:
         else:  # crossing 0°
             if lon >= cusp_start or lon < cusp_end:
                 return i + 1
-    return 1
+    return 12
 
 
 # ---------------------------------------------------------------------------
