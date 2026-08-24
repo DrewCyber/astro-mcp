@@ -6,6 +6,7 @@ import functools
 import json
 import logging
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,10 +26,22 @@ _tf = TimezoneFinder()
 
 
 def _make_geocoder() -> Any:
-    if settings.geocoding_provider == "opencage" and settings.opencage_api_key:
-        from geopy.geocoders import OpenCage
-        return OpenCage(api_key=settings.opencage_api_key)
-    return Nominatim(user_agent=settings.geocoding_user_agent)
+    if settings.geocoding_provider == "opencage":
+        if settings.opencage_api_key:
+            from geopy.geocoders import OpenCage
+            return OpenCage(api_key=settings.opencage_api_key)
+        # A misconfigured deployment must not run on the wrong service
+        # indefinitely without a trace.
+        logger.warning(
+            "GEOCODING_PROVIDER=opencage but OPENCAGE_API_KEY is empty; "
+            "falling back to Nominatim."
+        )
+    from geopy.extra.rate_limiter import RateLimiter
+
+    # Nominatim's usage policy caps anonymous traffic at 1 request/second;
+    # bursty MCP clients otherwise risk 403 blocks of the shared user agent.
+    return RateLimiter(Nominatim(user_agent=settings.geocoding_user_agent),
+                       min_delay_seconds=1.0, max_retries=0)
 
 
 _geocoder = _make_geocoder()
@@ -100,36 +113,73 @@ def _cache_put(key: str, geo: GeoLocation) -> None:
             logger.warning("Could not write geocode cache to %s: %s", path, exc)
 
 
-@functools.lru_cache(maxsize=settings.geocode_cache_size)
-def geocode(city: str) -> GeoLocation:
-    """Geocode a city string to (lat, lon, tz, name).
+# ---------------------------------------------------------------------------
+# Negative cache
+# ---------------------------------------------------------------------------
+# A city that just failed lookup will fail again on immediate retry; without a
+# short-TTL memory every retry goes back out to the (rate-limited) provider
+# and can wedge a session. Failures are remembered only briefly so transient
+# outages self-heal.
 
-    Backed by an in-process LRU and, unless disabled, a small JSON file so the
-    lookup survives server restarts.
+NEGATIVE_TTL_SECONDS = 300.0
+
+_negative_lock = threading.Lock()
+_negative_failures: dict[str, float] = {}
+
+
+def _negative_hit(key: str) -> bool:
+    now = time.monotonic()
+    with _negative_lock:
+        failed_at = _negative_failures.get(key)
+        if failed_at is None:
+            return False
+        if now - failed_at >= NEGATIVE_TTL_SECONDS:
+            del _negative_failures[key]
+            return False
+        return True
+
+
+def _negative_record(key: str) -> None:
+    with _negative_lock:
+        _negative_failures[key] = time.monotonic()
+
+
+@functools.lru_cache(maxsize=settings.geocode_cache_size)
+def _geocode_lru(key: str) -> GeoLocation:
+    """Network-backed geocode for an already-normalized key.
+
+    The LRU is keyed on the *normalized* string: caching on raw input made
+    'moscow' and 'Moscow' two separate entries and two network round-trips.
     """
-    key = city.strip().casefold()
     cached = _cache_get(key)
     if cached is not None:
         return cached
+    if _negative_hit(key):
+        raise AstroError(
+            "GEOCODE_FAILED",
+            f"City '{key}' not found (recently looked up).",
+            hint="Correct the name, or pass explicit {lat, lon, tz} coordinates.",
+        )
     try:
-        location = _geocoder.geocode(city, timeout=10)
+        location = _geocoder.geocode(key, timeout=10)
     except (GeocoderTimedOut, GeocoderServiceError) as exc:
         raise AstroError(
             "GEOCODE_FAILED",
-            f"Geocoding service unavailable while looking up '{city}'.",
+            f"Geocoding service unavailable while looking up '{key}'.",
             hint="Retry, or pass explicit {lat, lon, tz} coordinates instead.",
         ) from exc
     if location is None:
+        _negative_record(key)
         raise AstroError(
             "GEOCODE_FAILED",
-            f"City '{city}' not found.",
+            f"City '{key}' not found.",
             hint="Provide the full city name (e.g. 'Ulm, Germany') or coordinates.",
         )
     tz = _tf.timezone_at(lat=location.latitude, lng=location.longitude)
     if tz is None:
         raise AstroError(
             "TIMEZONE_UNKNOWN",
-            f"Cannot determine the timezone for '{city}'.",
+            f"Cannot determine the timezone for '{key}'.",
             hint="Pass tz explicitly in the location object.",
         )
     geo = GeoLocation(
@@ -140,6 +190,28 @@ def geocode(city: str) -> GeoLocation:
     )
     _cache_put(key, geo)
     return geo
+
+
+def normalize_place_key(city: str) -> str:
+    """Canonical cache/LRU key for a place string."""
+    return " ".join(city.split()).casefold()
+
+
+def geocode(city: str) -> GeoLocation:
+    """Geocode a city string to (lat, lon, tz, name).
+
+    Backed by an in-process LRU keyed on the normalized name and, unless
+    disabled, a small JSON file so lookups survive server restarts. Failed
+    lookups are negatively-cached for :data:`NEGATIVE_TTL_SECONDS`.
+    """
+    return _geocode_lru(normalize_place_key(city))
+
+
+def clear_geocode_cache() -> None:
+    """Drop all in-memory lookup state (LRU and negative cache)."""
+    _geocode_lru.cache_clear()
+    with _negative_lock:
+        _negative_failures.clear()
 
 
 def resolve_location(location: str | dict[str, Any]) -> GeoLocation:
