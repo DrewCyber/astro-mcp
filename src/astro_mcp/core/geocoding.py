@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
+import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -30,10 +33,84 @@ def _make_geocoder() -> Any:
 
 _geocoder = _make_geocoder()
 
+# ---------------------------------------------------------------------------
+# Persistent geocode cache
+# ---------------------------------------------------------------------------
+# The LRU below only lives as long as the process, and an MCP server is
+# restarted every time the editor restarts. Without a disk layer the same
+# handful of cities is re-fetched from Nominatim at the start of every session,
+# putting a network round-trip in front of the first chart. Only public
+# geographic data is stored: the city string and its coordinates, never dates
+# or times. Set GEOCODE_CACHE_PATH="" to disable.
+
+_cache_lock = threading.Lock()
+_disk_cache: dict[str, dict[str, Any]] | None = None
+
+
+def _cache_path() -> Path | None:
+    raw = settings.geocode_cache_path.strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def _load_disk_cache() -> dict[str, dict[str, Any]]:
+    global _disk_cache
+    if _disk_cache is not None:
+        return _disk_cache
+    path = _cache_path()
+    _disk_cache = {}
+    if path is not None and path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                _disk_cache = {k: v for k, v in loaded.items() if isinstance(v, dict)}
+        except (OSError, ValueError) as exc:
+            # A corrupt or unreadable cache must never break a lookup.
+            logger.warning("Ignoring unreadable geocode cache at %s: %s", path, exc)
+    return _disk_cache
+
+
+def _cache_get(key: str) -> GeoLocation | None:
+    with _cache_lock:
+        entry = _load_disk_cache().get(key)
+    if entry is None:
+        return None
+    try:
+        return GeoLocation(**entry)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cache_put(key: str, geo: GeoLocation) -> None:
+    path = _cache_path()
+    if path is None:
+        return
+    with _cache_lock:
+        cache = _load_disk_cache()
+        cache[key] = {"lat": geo.lat, "lon": geo.lon, "tz": geo.tz, "name": geo.name}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Write-then-replace so an interrupted write cannot truncate the
+            # existing cache.
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(cache), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            logger.warning("Could not write geocode cache to %s: %s", path, exc)
+
 
 @functools.lru_cache(maxsize=settings.geocode_cache_size)
 def geocode(city: str) -> GeoLocation:
-    """Geocode a city string to (lat, lon, tz, name). Uses LRU cache."""
+    """Geocode a city string to (lat, lon, tz, name).
+
+    Backed by an in-process LRU and, unless disabled, a small JSON file so the
+    lookup survives server restarts.
+    """
+    key = city.strip().casefold()
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     try:
         location = _geocoder.geocode(city, timeout=10)
     except (GeocoderTimedOut, GeocoderServiceError) as exc:
@@ -55,12 +132,14 @@ def geocode(city: str) -> GeoLocation:
             f"Cannot determine the timezone for '{city}'.",
             hint="Pass tz explicitly in the location object.",
         )
-    return GeoLocation(
+    geo = GeoLocation(
         lat=round(location.latitude, 6),
         lon=round(location.longitude, 6),
         tz=tz,
         name=location.address.split(",")[0].strip(),
     )
+    _cache_put(key, geo)
+    return geo
 
 
 def resolve_location(location: str | dict[str, Any]) -> GeoLocation:

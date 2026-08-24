@@ -9,7 +9,7 @@ Implements 14 tools backed by Swiss Ephemeris (`pyswisseph`) and integrates with
 | # | Name | Description |
 |---|---|---|
 | 1 | `calculate_natal_chart` | Full natal chart: planets, angles, houses, aspects |
-| 2 | `calculate_transits` | Transit aspects to natal chart |
+| 2 | `calculate_transits` | Transit aspects to natal chart, Moon phase, lunations and void-of-course |
 | 3 | `calculate_secondary_progressions` | Day-for-a-year progressions + Solar Arc |
 | 4 | `calculate_solar_return` | Annual solar return chart |
 | 5 | `calculate_rectification_hints` | Score candidate birth times against life events |
@@ -77,6 +77,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `OPENCAGE_API_KEY` | — | Required if `GEOCODING_PROVIDER=opencage` |
 | `GEOCODING_USER_AGENT` | `astro-mcp/1.0` | Nominatim user-agent |
 | `GEOCODE_CACHE_SIZE` | `512` | LRU cache size for geocoding results |
+| `GEOCODE_CACHE_PATH` | `~/.cache/astro-mcp/geocode.json` | Persistent geocode cache so lookups survive a restart. Stores only city → lat/lon/tz. Set empty to disable |
 | `DEFAULT_HOUSE_SYSTEM` | `P` | `P`=Placidus, `W`=Whole Sign, `K`=Koch |
 | `DEFAULT_ORB_FACTOR` | `1.0` | Global orb multiplier (0.5–1.5) |
 | `NODE_TYPE` | `true` | `true`=True Node, `mean`=Mean Node (applied consistently across all tools) |
@@ -94,6 +95,7 @@ src/astro_mcp/
 │   ├── errors.py          # AstroError and the structured error codes
 │   ├── ephemeris_provider.py  # Swiss Ephemeris wrapper (pyswisseph)
 │   ├── geocoding.py       # City → lat/lon/tz (geopy + timezonefinder)
+│   ├── moon.py            # Lunar phase, lunations and void-of-course
 │   └── formatters.py      # LLM-optimized serialization
 └── tools/
     ├── natal.py           # Tool 1

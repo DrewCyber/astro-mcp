@@ -93,6 +93,7 @@ class NatalChart:
     geo: GeoLocation
     jd: float
     house_system: str
+    is_day: bool
     dst_warning: str | None = None
     house_system_warning: str | None = None
 
@@ -105,6 +106,11 @@ class NatalChart:
 # ---------------------------------------------------------------------------
 # Astrological constants
 # ---------------------------------------------------------------------------
+
+# The south node has no Swiss Ephemeris body of its own: it is definitionally
+# the north node opposed. This sentinel lets it travel through the same
+# id-based plumbing as every real body; calc_planet() resolves it.
+SOUTH_NODE_ID = -1
 
 PLANET_IDS: dict[str, int] = {
     "Su": 0,   # SUN
@@ -119,12 +125,13 @@ PLANET_IDS: dict[str, int] = {
     "Pl": 9,   # PLUTO
     "NN_m": 10, # MEAN_NODE
     "NN": 11,   # TRUE_NODE
+    "SN": SOUTH_NODE_ID,  # derived: NN + 180
     "Li": 12,   # MEAN_APOG (Black Moon Lilith)
     "Ch": 15,   # CHIRON
     "Ce": 17,   # CERES
     "Pa": 18,   # PALLAS
-    "Ju2": 19,  # JUNO
-    "Ve2": 20,  # VESTA
+    "Jun": 19,  # JUNO   -- deliberately not "Ju2"; too easily read as Jupiter
+    "Ves": 20,  # VESTA  -- deliberately not "Ve2"; too easily read as Venus
 }
 
 SIGNS: list[str] = ["Ari","Tau","Gem","Can","Leo","Vir","Lib","Sco","Sag","Cap","Aqu","Pis"]

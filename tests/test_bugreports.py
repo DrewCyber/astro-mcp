@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import pytest
 
+from astro_mcp.core.ephemeris_provider import house_of
 from astro_mcp.core.errors import AstroError
 from astro_mcp.tools.ephemeris import find_aspect_exact_dates, get_ephemeris
+from astro_mcp.tools.natal import compute_natal
 from astro_mcp.tools.transits import calculate_transits
 
 BATUMI = {"lat": 41.61689, "lon": 41.607043, "tz": "Asia/Tbilisi"}
@@ -168,3 +170,142 @@ def test_unknown_timezone_is_a_structured_error_not_an_internal_one() -> None:
                            birth_time="14:30", birth_location=bad)
     assert exc.value.code == "TIMEZONE_UNKNOWN"
     assert "Europe/Tbilisi" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-26: events_note blamed the 14-day threshold for a requested omission
+# ---------------------------------------------------------------------------
+
+
+def test_requested_lunar_omission_is_not_blamed_on_the_window_length() -> None:
+    result = calculate_transits(transit_date="2026-07-27", period_days=7,
+                                include_moon_events=False, **NATAL)
+    note = result["events_note"]
+    assert "include_moon_events" in note
+    assert "14" not in note, "a 7-day window did not trip the threshold"
+
+
+def test_threshold_omission_still_explains_the_window_length() -> None:
+    result = calculate_transits(transit_date="2026-07-27", period_days=90, **NATAL)
+    assert "14" in result["events_note"]
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-26: transiting planets were housed against the transit-moment chart
+# ---------------------------------------------------------------------------
+
+
+def test_transiting_planets_are_placed_in_natal_houses() -> None:
+    """The house field answers "which of MY houses is this transit in"."""
+    chart = compute_natal(NATAL["birth_date"], NATAL["birth_time"],
+                          NATAL["birth_location"], "P")
+    result = calculate_transits(transit_date="2026-07-27", **NATAL)
+    for code, point in result["transit_planets"].items():
+        assert point["house"] == house_of(point["deg"], chart.cusps), code
+
+
+def test_relocating_the_transit_does_not_move_planets_between_houses() -> None:
+    """transit_location supplies a timezone, not a new set of house cusps."""
+    home = calculate_transits(transit_date="2026-07-27", transit_time="12:00",
+                              **NATAL)
+    away = calculate_transits(transit_date="2026-07-27", transit_time="12:00",
+                              transit_location={"lat": 53.594726,
+                                                "lon": 87.339684,
+                                                "tz": "Asia/Tbilisi"},
+                              **NATAL)
+    assert ({k: v["house"] for k, v in home["transit_planets"].items()}
+            == {k: v["house"] for k, v in away["transit_planets"].items()})
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-27: reported as a cross-tool disagreement over a Full Moon date.
+# Not a defect: a Mo-Opp-Su *event* is the transiting Moon against the NATAL
+# Sun, while a Full Moon is the Moon against the CURRENT Sun. These pin the
+# distinction so a real divergence would still be caught.
+# ---------------------------------------------------------------------------
+
+
+def _events(result: dict, tp: str, np: str, asp: str) -> list[str]:
+    return [e["exact"] for e in result["aspect_events"]
+            if e["tp"] == tp and e["np"] == np and e["asp"] == asp]
+
+
+def test_aspect_events_agree_with_the_same_query_in_natal_mode() -> None:
+    """The documented cross-tool invariant, compared like with like."""
+    birth = {"birth_date": "1986-08-10", "birth_time": "15:00",
+             "birth_location": {"lat": 53.594726, "lon": 87.339684,
+                                "tz": "Asia/Novokuznetsk"}}
+    transits = calculate_transits(transit_date="2026-07-27", period_days=7, **birth)
+    direct = find_aspect_exact_dates(
+        planet1="Mo", planet2="Su", aspect="Opp",
+        date_from="2026-07-27", date_to="2026-08-02",
+        mode="transit-to-natal", orb=1.0, **birth,
+    )
+    assert _events(transits, "Mo", "Su", "Opp") == [
+        o["exact_date"] for o in direct["occurrences"]
+    ]
+
+
+def test_a_lunation_is_not_a_contact_to_the_natal_sun() -> None:
+    """The trap: both read "Moon opposite Sun" but use different Suns."""
+    birth = {"birth_date": "1986-08-10", "birth_time": "15:00",
+             "birth_location": {"lat": 53.594726, "lon": 87.339684,
+                                "tz": "Asia/Novokuznetsk"}}
+    to_natal_sun = find_aspect_exact_dates(
+        planet1="Mo", planet2="Su", aspect="Opp",
+        date_from="2026-07-27", date_to="2026-08-02",
+        mode="transit-to-natal", orb=1.0, **birth,
+    )
+    full_moon = find_aspect_exact_dates(
+        planet1="Su", planet2="Mo", aspect="Opp",
+        date_from="2026-07-27", date_to="2026-08-02",
+        mode="transit-to-transit", orb=1.0,
+    )
+    assert to_natal_sun["occurrences"][0]["exact_date"] == "2026-07-30"
+    assert full_moon["occurrences"][0]["exact_date"] == "2026-07-29"
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-27 (re-report): the same Full Moon "disagreement" filed again after
+# the prompt-only clarification failed to land. The transits result now carries
+# the lunation outright so it never has to be inferred from a natal contact.
+# ---------------------------------------------------------------------------
+
+
+def test_transits_report_the_next_lunations() -> None:
+    result = calculate_transits(transit_date="2026-07-27", period_days=7, **NATAL)
+    moon = result["moon"]
+    assert moon["next_full"]["dt"].startswith("2026-07-29")
+    assert "next_new" in moon
+
+
+def test_a_lunation_carries_its_own_sign_not_the_queried_one() -> None:
+    """Labelling the Full Moon with moon.sign put it in the wrong sign."""
+    result = calculate_transits(transit_date="2026-07-27", period_days=7, **NATAL)
+    moon = result["moon"]
+    assert moon["sign"] == "Cap", "the Moon's sign on the queried day"
+    assert moon["next_full"]["sign"] == "Aqu", "its sign at the lunation itself"
+    assert moon["next_full"]["sun_sign"] == "Leo"
+
+
+def test_reported_full_moon_matches_a_direct_sky_query() -> None:
+    """moon.next_full must equal the transit-to-transit Su/Mo opposition."""
+    result = calculate_transits(transit_date="2026-07-27", period_days=7, **NATAL)
+    direct = find_aspect_exact_dates(
+        planet1="Su", planet2="Mo", aspect="Opp",
+        date_from="2026-07-27", date_to="2026-08-02",
+        mode="transit-to-transit", orb=1.0,
+    )
+    assert result["moon"]["next_full"]["dt"][:10] == direct["occurrences"][0]["exact_date"]
+
+
+def test_the_lunation_differs_from_the_natal_sun_contact() -> None:
+    """The trap that produced two false bug reports, pinned in both tools."""
+    birth = {"birth_date": "1986-08-10", "birth_time": "15:00",
+             "birth_location": {"lat": 53.594726, "lon": 87.339684,
+                                "tz": "Asia/Novokuznetsk"}}
+    result = calculate_transits(transit_date="2026-07-27", period_days=7, **birth)
+    natal_contact = [e["exact"] for e in result["aspect_events"]
+                     if e["tp"] == "Mo" and e["np"] == "Su" and e["asp"] == "Opp"]
+    assert result["moon"]["next_full"]["dt"][:10] == "2026-07-29"
+    assert natal_contact == ["2026-07-30"]

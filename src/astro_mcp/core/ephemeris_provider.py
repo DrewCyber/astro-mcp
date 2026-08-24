@@ -17,6 +17,7 @@ from astro_mcp.core.models import (
     PLANET_IDS,
     RULERS,
     SIGNS,
+    SOUTH_NODE_ID,
     Aspect,
     ChartPoint,
     HouseCusp,
@@ -141,6 +142,15 @@ def house_of(lon: float, cusps: list[float]) -> int:
 
 def calc_planet(jd: float, planet_id: int) -> tuple[float, float]:
     """Return (longitude, speed_deg_per_day)."""
+    if planet_id == SOUTH_NODE_ID:
+        # Derived rather than looked up: the south node is the north node
+        # opposed. Both nodes regress together, so the speed is shared, not
+        # mirrored -- negating it would report SN as direct while NN is
+        # retrograde. Resolving the flavour here keeps SN on whichever node
+        # NODE_TYPE selected.
+        node_id = PLANET_IDS["NN_m"] if settings.use_mean_node else PLANET_IDS["NN"]
+        lon, speed = calc_planet(jd, node_id)
+        return (lon + 180.0) % 360.0, speed
     try:
         result, retflag = swe.calc_ut(jd, planet_id, _CALC_FLAGS)
     except swe.Error as exc:
@@ -161,6 +171,26 @@ def calc_planet(jd: float, planet_id: int) -> tuple[float, float]:
         ) from exc
     _check_calc_flags(retflag, planet_id)
     return result[0], result[3]
+
+
+# ---------------------------------------------------------------------------
+# Day / night
+# ---------------------------------------------------------------------------
+
+def is_day_chart(jd: float, lat: float, lon: float) -> bool:
+    """True when the Sun is above the horizon at (jd, lat, lon).
+
+    Derived from the Sun's true altitude rather than its house placement:
+    quadrant-house numbering puts houses 7-12 above the horizon only for
+    northern-hemisphere charts cast in a quadrant system, and whole-sign or
+    southern-hemisphere placements drift across the ascendant by degrees.
+    Altitude is unambiguous everywhere.
+    """
+    sun_lon, _ = calc_planet(jd, PLANET_IDS["Su"])
+    _, true_altitude, _ = swe.azalt(
+        jd, swe.ECL2HOR, (lon, lat, 0), 0.0, 0.0, (sun_lon, 0.0, 1.0)
+    )
+    return float(true_altitude) > 0
 
 
 def build_chart_point(
@@ -207,7 +237,7 @@ def calc_all_planets(
         base_keys.append("Ch")
     if include_lilith:
         base_keys.append("Li")
-    asteroid_keys = ["Ce", "Pa", "Ju2", "Ve2"] if include_asteroids else []
+    asteroid_keys = ["Ce", "Pa", "Jun", "Ves"] if include_asteroids else []
 
     # Decide which node ID to use
     nn_key = "NN_m" if use_mean_node else "NN"
@@ -221,10 +251,10 @@ def calc_all_planets(
         store_key = "NN" if key == "NN_m" else key
         planets[store_key] = build_chart_point(lon, speed, cusps)
 
-    # South Node = NN + 180°
+    # South Node = NN + 180°, regressing at the same rate as the North Node.
     nn = planets["NN"]
     sn_lon = (nn.lon_decimal + 180) % 360
-    planets["SN"] = build_chart_point(sn_lon, -nn.speed, cusps)
+    planets["SN"] = build_chart_point(sn_lon, nn.speed, cusps)
 
     return planets
 

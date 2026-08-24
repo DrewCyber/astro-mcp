@@ -10,12 +10,14 @@ from astro_mcp.core.ephemeris_provider import (
     calc_all_planets,
     calc_houses,
     find_aspects,
+    is_day_chart,
     resolve_house_system,
     to_jd,
 )
 from astro_mcp.core.formatters import serialize_natal, strip_nulls
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
 from astro_mcp.core.models import ANGLE_KEYS, Aspect, NatalChart
+from astro_mcp.core.moon import moon_phase
 
 
 def dedupe_aspects(raw: list[Aspect]) -> list[Aspect]:
@@ -53,6 +55,7 @@ def compute_natal(
     angles = build_angles(ascmc, cusps)
     house_cusps = build_house_cusps(cusps)
     planets = calc_all_planets(jd, cusps, include_asteroids=include_asteroids)
+    is_day = is_day_chart(jd, geo.lat, geo.lon)
 
     all_points = {**planets, **angles}
     aspects = dedupe_aspects(
@@ -86,6 +89,7 @@ def compute_natal(
         geo=geo,
         jd=jd,
         house_system=house_system,
+        is_day=is_day,
         dst_warning=dst_warning,
         house_system_warning=hs_warning,
     )
@@ -111,11 +115,15 @@ def calculate_natal_chart(
     result = serialize_natal(
         chart.meta, chart.planets, chart.angles, chart.houses, chart.aspects, degree_format
     )
+    # Reported rather than left to the caller: deriving the phase from the two
+    # longitudes is a classic source of waxing/waning errors.
+    result["moon"] = moon_phase(chart.jd)
 
     if include_arabic_parts:
-        from astro_mcp.tools.arabic_parts import _compute_parts
-        result["arabic_parts"] = _compute_parts(
-            chart.planets, chart.angles, chart.houses, degree_format
+        from astro_mcp.tools.arabic_parts import compute_parts
+        result["arabic_parts"] = compute_parts(
+            chart.planets, chart.angles, chart.houses, degree_format,
+            is_day=chart.is_day,
         )
 
     return result

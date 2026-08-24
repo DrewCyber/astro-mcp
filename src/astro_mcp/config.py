@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     opencage_api_key: str = Field(default="", alias="OPENCAGE_API_KEY")
     geocoding_user_agent: str = Field(default="astro-mcp/1.0", alias="GEOCODING_USER_AGENT")
     geocode_cache_size: int = Field(default=512, alias="GEOCODE_CACHE_SIZE")
+    geocode_cache_path: str = Field(
+        default="~/.cache/astro-mcp/geocode.json", alias="GEOCODE_CACHE_PATH"
+    )
     default_house_system: Literal["P", "W", "K"] = Field(default="P", alias="DEFAULT_HOUSE_SYSTEM")
     default_orb_factor: float = Field(default=1.0, ge=0.1, le=3.0, alias="DEFAULT_ORB_FACTOR")
     node_type: Literal["true", "mean"] = Field(default="true", alias="NODE_TYPE")

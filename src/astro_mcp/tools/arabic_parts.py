@@ -59,19 +59,26 @@ def _get_lon(
     raise KeyError(f"Unknown chart point: {code}")
 
 
-def _compute_parts(
+def compute_parts(
     planets: dict[str, ChartPoint],
     angles: dict[str, ChartPoint],
     houses: list[HouseCusp],
     degree_format: str = "dms",
     parts: list[str] | None = None,
+    *,
+    is_day: bool | None = None,
 ) -> dict[str, Any]:
-    """Internal: compute Arabic parts from natal chart points."""
-    # Determine day/night: the Sun in houses 7-12 is above the horizon (night
-    # chart is the complement).
-    _su = planets.get("Su")
-    su_house = (_su.house or 1) if _su is not None else 1
-    is_day = su_house not in (7, 8, 9, 10, 11, 12)
+    """Compute Arabic parts from natal chart points.
+
+    ``is_day`` selects the sect of each formula (diurnal vs nocturnal).  It
+    must come from a single source of truth — ``NatalChart.is_day``, derived
+    from solar altitude.  When omitted it falls back to the Sun's house:
+    houses 7-12 lie above the horizon, so Sun there means a *day* chart.
+    """
+    if is_day is None:
+        _su = planets.get("Su")
+        su_house = (_su.house or 1) if _su is not None else 1
+        is_day = su_house in (7, 8, 9, 10, 11, 12)
 
     result: dict[str, Any] = {}
     requested = parts if parts and "all" not in parts else list(PART_FORMULAS.keys())
@@ -115,16 +122,15 @@ def calculate_arabic_parts(
         )
     chart = compute_natal(birth_date, birth_time, birth_location, house_system)
 
-    su_house = chart.planets["Su"].house or 1
-    is_day = su_house not in (7, 8, 9, 10, 11, 12)
-    chart_type = "day" if is_day else "night"
+    chart_type = "day" if chart.is_day else "night"
 
-    result_parts = _compute_parts(
+    result_parts = compute_parts(
         chart.planets,
         chart.angles,
         chart.houses,
         degree_format,
         parts,
+        is_day=chart.is_day,
     )
 
     out: dict[str, Any] = {

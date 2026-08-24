@@ -5,21 +5,21 @@ from __future__ import annotations
 from datetime import date as Date
 from typing import Any
 
+from astro_mcp.config import settings
 from astro_mcp.core.ephemeris_provider import (
     aspect_delta,
     calc_all_planets,
-    calc_houses,
     calc_planet,
     find_aspects,
     find_exact_aspect_jd,
     jd_to_iso,
-    resolve_house_system,
     to_jd,
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point, strip_nulls
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
 from astro_mcp.core.models import ANGLE_KEYS, ASPECT_ANGLES, PLANET_IDS, ChartPoint
+from astro_mcp.core.moon import moon_phase, moon_void_of_course, next_lunations
 from astro_mcp.tools.natal import compute_natal
 
 # Upper bound on a scanned window.  The day-by-day scan below evaluates every
@@ -30,6 +30,12 @@ MAX_PERIOD_DAYS = 366
 
 FAST_KEYS = frozenset({"Mo", "Me", "Ve", "Ma", "Su"})
 
+# Past a couple of weeks the Moon's events are noise: it aspects every natal
+# point roughly once a month, so a 90-day scan produced 708 lunar events out of
+# 948 -- 70% of the payload -- burying the slow contacts that actually carry a
+# forecast.  Beyond this many days lunar events are dropped unless asked for.
+MOON_EVENT_MAX_DAYS = 14
+
 # How far either side of the queried moment to look for the exact hit of an
 # aspect that is currently within orb.  Slow outer-planet aspects can stay in
 # orb for months, so a symmetric window is used rather than the previous
@@ -37,15 +43,35 @@ FAST_KEYS = frozenset({"Mo", "Me", "Ve", "Ma", "Su"})
 EXACT_SEARCH_DAYS = 200
 
 
+def _pid(key: str) -> int:
+    """Swiss Ephemeris id for a chart key, honouring the mean/true node setting.
+
+    ``calc_all_planets`` stores both node flavours under the canonical key
+    ``NN``, so looking the id up naively would scan the true node even when the
+    chart was built from the mean one.
+    """
+    if key == "NN" and settings.use_mean_node:
+        return PLANET_IDS["NN_m"]
+    return PLANET_IDS[key]
+
+
 def _transit_snapshot(
     jd: float,
-    lat: float,
-    lon: float,
-    house_system: str,
+    natal_cusps: list[float],
     fast_planets_only: bool,
+    include_asteroids: bool = False,
 ) -> dict[str, ChartPoint]:
-    cusps, _ = calc_houses(jd, lat, lon, house_system)
-    planets = calc_all_planets(jd, cusps, include_asteroids=False)
+    """Positions of the transiting bodies, housed against the NATAL cusps.
+
+    The houses are deliberately the natal ones. This tool answers "what is
+    transiting my chart", and the standard reading of a transiting planet's
+    house is the natal house it is moving through -- "transiting Saturn is
+    crossing your 7th". Housing them against a chart cast for the transit
+    moment instead (which is what this did previously) disagreed with the natal
+    house for essentially every body and made the field unusable for the one
+    question it exists to answer.
+    """
+    planets = calc_all_planets(jd, natal_cusps, include_asteroids=include_asteroids)
     if fast_planets_only:
         planets = {k: v for k, v in planets.items() if k in FAST_KEYS}
     return planets
@@ -62,7 +88,7 @@ def _find_exact_near(
     Walks outwards in half-window steps so the nearest perfection is found
     rather than an arbitrary one inside a wide bracket.
     """
-    pid = PLANET_IDS[tp_code]
+    pid = _pid(tp_code)
     for half in (5.0, 20.0, 60.0, EXACT_SEARCH_DAYS):
         ex_jd = find_exact_aspect_jd(
             pid, None, asp_angle, jd - half, jd + half, natal_lon2=natal_lon
@@ -76,7 +102,7 @@ def _scan_aspect_events(
     natal_points: dict[str, ChartPoint],
     jd_start: float,
     days: int,
-    fast_planets_only: bool,
+    transit_keys: list[str],
 ) -> list[dict[str, Any]]:
     """Find every transit-to-natal aspect that perfects inside the window.
 
@@ -86,13 +112,14 @@ def _scan_aspect_events(
     :func:`~astro_mcp.tools.ephemeris.find_aspect_exact_dates`, which reports
     the same perfections for the same date range.
 
+    ``transit_keys`` is supplied by the caller so that the bodies producing
+    events are exactly the bodies whose positions are also reported; deriving
+    it independently here previously leaked asteroid events into a result whose
+    ``transit_planets`` contained no asteroids.
+
     Samples once per day, watching for a sign change in :func:`aspect_delta`,
     then bisects the bracketing day for the exact moment.
     """
-    transit_keys = [k for k in PLANET_IDS if k != "NN_m"]
-    if fast_planets_only:
-        transit_keys = [k for k in transit_keys if k in FAST_KEYS]
-
     jd_end = jd_start + days
 
     # Cache one longitude sample per body per day; the scan reuses each sample
@@ -100,7 +127,7 @@ def _scan_aspect_events(
     samples: list[tuple[float, dict[str, float]]] = []
     for day in range(days + 1):
         jd = jd_start + day
-        samples.append((jd, {k: calc_planet(jd, PLANET_IDS[k])[0] for k in transit_keys}))
+        samples.append((jd, {k: calc_planet(jd, _pid(k))[0] for k in transit_keys}))
 
     events: list[dict[str, Any]] = []
     for tp in transit_keys:
@@ -115,11 +142,11 @@ def _scan_aspect_events(
                     if (prev_delta is not None and prev_delta * delta < 0
                             and abs(prev_delta - delta) < 180):
                         ex_jd = find_exact_aspect_jd(
-                            PLANET_IDS[tp], None, asp_angle,
+                            _pid(tp), None, asp_angle,
                             jd - 1, jd, natal_lon2=natal_lon,
                         )
                         if ex_jd is not None and jd_start <= ex_jd < jd_end:
-                            _, speed = calc_planet(ex_jd, PLANET_IDS[tp])
+                            _, speed = calc_planet(ex_jd, _pid(tp))
                             events.append({
                                 "tp": tp,
                                 "np": np_code,
@@ -143,6 +170,8 @@ def calculate_transits(
     transit_location: str | dict[str, Any] | None = None,
     orbs: dict[str, float] | None = None,
     fast_planets_only: bool = False,
+    include_asteroids: bool = False,
+    include_moon_events: bool | None = None,
     house_system: str = "P",
     degree_format: str = "dms",
     max_orb: float | None = 3.0,
@@ -154,9 +183,17 @@ def calculate_transits(
     transit_time: Local time at the transit location (HH:MM). Defaults to
         noon local time.  Provide together with transit_location so the
         correct timezone is used for the conversion to UTC.
+    transit_location: Used only to resolve the timezone that ``transit_time``
+        is expressed in.  Houses are always the natal ones, so relocating does
+        not move the transiting planets between houses.
     period_days: When greater than 1, an ``aspect_events`` list is returned
         covering every transit-to-natal aspect that perfects within
         ``[transit_date, transit_date + period_days]``.
+    include_asteroids: Add Ceres, Pallas, Juno and Vesta to both the reported
+        positions and the event scan.
+    include_moon_events: Whether ``aspect_events`` includes lunar contacts.
+        Defaults to true for windows up to ``MOON_EVENT_MAX_DAYS`` days and
+        false beyond that, where they would swamp the slower contacts.
     """
     if not transit_date:
         raise AstroError("INPUT_ERROR", "transit_date is required.")
@@ -174,12 +211,12 @@ def calculate_transits(
     chart = compute_natal(birth_date, birth_time, birth_location, house_system)
     natal_points = chart.all_points
 
-    # Transit geo — resolve fully so we have the timezone
+    # Transit geo is resolved only for its timezone: transit_time is a local
+    # wall-clock time at that place.
     if transit_location:
         tgeo = resolve_location(transit_location)
     else:
         tgeo = chart.geo
-    transit_hs, hs_warning = resolve_house_system(house_system, tgeo.lat)
 
     try:
         Date.fromisoformat(transit_date)
@@ -192,7 +229,7 @@ def calculate_transits(
     jd = to_jd(utc_str)
 
     transit_planets = _transit_snapshot(
-        jd, tgeo.lat, tgeo.lon, transit_hs, fast_planets_only
+        jd, chart.cusps, fast_planets_only, include_asteroids
     )
 
     raw_aspects = find_aspects(
@@ -228,19 +265,47 @@ def calculate_transits(
         "date": transit_date,
         "dt": utc_str,
         "period_days": period_days,
+        "moon": {
+            **moon_phase(jd),
+            **next_lunations(jd),
+            "voc": moon_void_of_course(jd),
+        },
         "transit_planets": {
             k: serialize_point(v, degree_format) for k, v in transit_planets.items()
         },
         "aspects": aspects_out,
     }
-    if hs_warning:
-        result["house_system_warning"] = hs_warning
 
     if period_days > 1:
+        # Only bodies whose positions are reported may produce events, so the
+        # two halves of the result can never disagree about what was scanned.
+        # SN is excluded: it sits exactly opposite NN, so its events are the
+        # same contacts with the aspect mirrored, and listing both doubles the
+        # nodal rows for no extra information.
+        event_keys = [k for k in transit_planets if k in PLANET_IDS and k != "SN"]
+        show_moon = (
+            period_days <= MOON_EVENT_MAX_DAYS
+            if include_moon_events is None
+            else include_moon_events
+        )
+        if not show_moon:
+            event_keys = [k for k in event_keys if k != "Mo"]
+            # State the reason that actually applied: claiming the window was
+            # too long when the caller asked for the omission invites the
+            # reader to infer an automatic threshold that did not fire.
+            result["events_note"] = (
+                "Lunar events omitted at your request (include_moon_events=false)."
+                if include_moon_events is not None
+                else (
+                    f"Lunar events omitted: beyond {MOON_EVENT_MAX_DAYS} days the Moon "
+                    f"contacts every natal point and would dominate the list. Pass "
+                    f"include_moon_events=true, or query a shorter period, to see them."
+                )
+            )
         # Events are reported for whole calendar days (UTC) starting on
         # transit_date, not for a window hanging off the transit moment.
         result["aspect_events"] = _scan_aspect_events(
-            natal_points, to_jd(f"{transit_date}T00:00:00Z"), period_days, fast_planets_only
+            natal_points, to_jd(f"{transit_date}T00:00:00Z"), period_days, event_keys
         )
 
     return result

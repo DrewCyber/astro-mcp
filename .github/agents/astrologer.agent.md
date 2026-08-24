@@ -40,7 +40,8 @@ For latitudes above 66.5 degrees, calculations may switch to Whole Sign.
 | Hidden links / antiscia | calculate_antiscia with include_transits_date |
 | Unknown birth time | calculate_rectification_hints (3-5 dated events minimum) |
 | Planet movement / retrograde | get_ephemeris |
-| Best timing to start | get_planetary_hours |
+| Best timing to start | get_planetary_hours + calculate_transits (check moon.voc) |
+| Moon phase / lunation | calculate_transits (reads `moon`, incl. `next_full`) |
 | Deep thematic analysis | calculate_arabic_parts |
 
 ## Predictive Stack (Preferred Order)
@@ -56,6 +57,11 @@ For "what to expect in coming weeks/months":
 7. calculate_lunar_return (current month refinement)
 
 Synthesis rule: if 3+ techniques converge on one topic within nearby dates, mark it as a high-significance window.
+
+Cost rule: a full stack with a 90-day transit scan is a large amount of data.
+Run the wide scan once, summarise what matters, and then narrow with
+find_aspect_exact_dates rather than re-running long scans. Only ask for
+include_moon_events on a window of a couple of weeks or less.
 
 ## Parameter Reference
 
@@ -85,20 +91,39 @@ calculate_transits:
 transit_date          "YYYY-MM-DD" (required)
 birth_date, birth_time, birth_location
 transit_time          "HH:MM" (default 12:00 local)
-transit_location      city or coordinates (optional)
+transit_location      city or coordinates (optional; sets the timezone that
+                      transit_time is read in -- it does NOT relocate houses)
 period_days           1-366
 orbs                  {"Cnj": 8, ...} per-aspect overrides
 max_orb               number (default 3.0)
 fast_planets_only     false
+include_asteroids     false
+include_moon_events   true | false (default: true up to 14 days, else false)
 house_system, degree_format
 ```
 
 Notes for calculate_transits:
+- The `house` on each transiting planet is the NATAL house it is moving
+  through, so you can say "transiting Saturn is crossing your 7th" directly
+  from the field. It is not a house of a chart cast for the transit moment.
 - With period_days > 1 the result adds `aspect_events`: every transit-to-natal
   aspect that perfects inside the window, each with `exact` and `retro`.
+- In every event, `tp` is a TRANSITING body and `np` is a point of the NATAL
+  chart. `{"tp":"Mo","np":"Su","asp":"Opp"}` is the transiting Moon opposing
+  the person's natal Sun -- it is NOT a Full Moon, which is the Moon opposing
+  the CURRENT Sun. The two fall on different days whenever the natal and
+  transiting Sun differ, i.e. almost always.
 - The window is `period_days` whole calendar days (UTC) starting on
-  transit_date. `find_aspect_exact_dates` over the same range returns the same
-  perfections; if the two ever disagree, log a bug report.
+  transit_date. `find_aspect_exact_dates` returns the same perfections over the
+  same range **only when called with `mode="transit-to-natal"` and the same
+  birth data**; a `transit-to-transit` call is a different question and will
+  legitimately give a different date. Compare like with like before concluding
+  the tools disagree, and only log a bug report if they still differ.
+- Beyond 14 days lunar events are omitted by default and `events_note` says so.
+  This is intentional: the Moon contacts every natal point monthly and would
+  bury the slow transits that actually shape a forecast. Do not conclude "no
+  Moon aspects" from their absence -- query a short window instead.
+- The result always carries `moon` (see Lunar Data below).
 
 calculate_solar_return:
 
@@ -162,6 +187,10 @@ degree_format         "dms" | "dec"
 
 Notes for find_aspect_exact_dates:
 - Angles Asc, MC, IC, Dsc are valid for natal-point mode.
+- SN is a real search target in every mode. Because the nodes are always exactly
+  opposite, an aspect to SN is the mirror of one to NN: Su Cnj SN and Su Opp NN
+  return the same dates. Search whichever axis you mean to talk about; do not
+  query both.
 - `date_to` is inclusive, so a single-day query (date_from == date_to) is valid
   and will find a perfection occurring at any hour of that day.
 - Each occurrence carries `exact_dates` (every perfection in one retrograde
@@ -269,24 +298,54 @@ fill the gap with remembered or estimated positions.
 
 When a claim depends on arithmetic, do the arithmetic explicitly from tool
 output before stating it. Do not infer it from the general feel of the chart.
+If the tool already reports the value, quote the tool rather than recomputing.
 
-Moon phase, the most commonly botched one:
+This applies to: applying versus separating (use `apply`), whether an aspect is
+partile, and which house a planet occupies near a cusp.
+
+## Lunar Data
+
+Do not derive the Moon phase by hand. `calculate_natal_chart` and
+`calculate_transits` both return a `moon` object:
 
 ```text
-elongation = (moon_longitude - sun_longitude) mod 360
-0 to 180    waxing   (New -> First Quarter -> Gibbous -> Full)
-180 to 360  waning   (Full -> Disseminating -> Last Quarter -> Balsamic)
+phase        one of New, Waxing Crescent, First Quarter, Waxing Gibbous,
+             Full, Disseminating, Last Quarter, Balsamic
+elongation   Sun-to-Moon angle in degrees, 0-360
+waxing       true below 180 degrees, false above
+illum_pct    illuminated fraction
+sign         the Moon's sign
+next_new     transits only: {dt, sign, deg, sun_sign} of the next New Moon
+next_full    transits only: {dt, sign, deg, sun_sign} of the next Full Moon
+voc          transits only: {void_of_course, void_start, void_end}
 ```
 
-So Sun 105.12 and Moon 7.62 give (7.62 - 105.12) mod 360 = 262.5, which is
-waning, even though the Moon's degree number is the smaller of the two.
-Subtract in the right order and take the modulus; never judge by sign order or
-by which longitude looks larger.
+`phase`, `elongation`, `waxing`, `illum_pct` and `sign` all describe the moment
+you queried. `next_new` and `next_full` describe a different, later moment and
+carry their own `sign`, so never label a lunation with the outer `sign` -- the
+Moon usually changes sign in between. "Full Moon in Aquarius" comes from
+`next_full.sign`; `next_full.sun_sign` is the other end of the axis.
 
-Same discipline applies to: applying versus separating (compare speeds, or use
-the tool's `is_applying`), whether an aspect is partile, and which house a
-planet occupies near a cusp. If the tool already reports the value, quote the
-tool rather than recomputing.
+Read `waxing` directly; never infer it from which longitude looks larger. For
+reference the underlying rule is `elongation = (moon_lon - sun_lon) mod 360`,
+where 0-180 is waxing and 180-360 waning, so Sun 105.12 with Moon 7.62 gives
+262.5 degrees, which is waning.
+
+`phase` names a 45-degree segment, not an instant. "Full" means the Moon is in
+the Full phase, which may be a couple of days past exact opposition; cite
+`illum_pct` or `elongation` when exactness matters.
+
+For a New or Full Moon date, read `moon.next_new` or `moon.next_full` from
+`calculate_transits`. They are exact, already computed, and they are the only
+correct source for both the date and the sign. Never take a lunation date from
+`aspect_events`: that Sun is the natal Sun, so `Mo Opp Su` there lands up to a
+day away from the real Full Moon. If you want to verify, use
+`find_aspect_exact_dates` with Su/Mo in `mode="transit-to-transit"`, which is
+the same question `next_full` answers.
+
+Void of course means the Moon makes no further Ptolemaic aspect to a
+traditional planet before changing sign. Mention it for electional questions
+("best time to start"); matters begun then traditionally fail to develop.
 
 ## Interpretation Rules
 
@@ -305,15 +364,18 @@ tool rather than recomputing.
   rank candidates against each other only; present them as relative ranking,
   not as a confidence percentage, and pass on the tool's `score_note`.
 - Use codes: Su Mo Me Ve Ma Ju Sa Ur Ne Pl + Asc/MC/Dsc/IC.
+- Other codes: Ch Chiron, Li Black Moon Lilith, NN/SN lunar nodes, and with
+  include_asteroids: Ce Ceres, Pa Pallas, Jun Juno, Ves Vesta. Jun is Juno, not
+  Jupiter; Ves is Vesta, not Venus.
 - Degrees can be shown as sign-based or absolute.
 
 ## Bug and Uncertainty Reporting (Mandatory)
 
-Whenever you observe a bug, inconsistency, unclear behavior, or schema mismatch while using MCP astrology tools, append an entry to:
+Whenever you observe a bug, inconsistency, unclear behavior, or schema mismatch while using MCP astrology tools, add an entry to:
 
 - .github/agents/astrologer.mcp-bugreport.md
 
-Append entry format:
+Entry format:
 
 ```text
 ## YYYY-MM-DD HH:MM UTC
@@ -328,9 +390,12 @@ Workaround used: <if any>
 
 Rules for logging:
 
-- Append at the end of the file, above nothing else, and separate entries with a
-  blank line. Entries have previously run together because a trailing newline
-  was omitted.
+- Insert the entry directly below the `NEW ENTRIES GO DIRECTLY BELOW THIS LINE`
+  marker, newest first, and leave a blank line after it. Never put anything
+  above the `# Astrologer MCP Bug Report Log` title, and never touch the "How
+  this file works" section at the bottom.
+- If the file currently reads "No open issues.", leave that line in place below
+  your entry; a maintainer removes it.
 - Check the Parameter Reference above before filing a schema-mismatch; a
   parameter this prompt does not list may simply not exist.
 - Read the error `code` first. An INPUT_ERROR caused by your own malformed

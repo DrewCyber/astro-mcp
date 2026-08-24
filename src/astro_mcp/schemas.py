@@ -123,6 +123,18 @@ class TransitsInput(_BirthData):
     fast_planets_only: bool = Field(
         default=False, description="Restrict to Moon, Mercury, Venus, Sun and Mars"
     )
+    include_asteroids: bool = Field(
+        default=False,
+        description="Add Ceres (Ce), Pallas (Pa), Juno (Jun) and Vesta (Ves)",
+    )
+    include_moon_events: bool | None = Field(
+        default=None,
+        description=(
+            "Include lunar contacts in aspect_events. Defaults to true for "
+            "windows of 14 days or less and false beyond that, where the Moon "
+            "aspects every natal point and buries the slower transits"
+        ),
+    )
     house_system: HouseSystem = "P"
     degree_format: DegreeFormat = "dms"
     max_orb: float | None = Field(
