@@ -123,13 +123,24 @@ def create_server() -> Server:
     # models below are the source of that schema, so nothing is lost.
     @server.call_tool(validate_input=False)
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        func = _load_tool(name)
         model = TOOL_INPUTS.get(name)
-        if func is None or model is None:
+        if model is None or name not in _TOOL_REGISTRY:
             return _err(
                 "UNKNOWN_TOOL",
                 f"Tool '{name}' not found.",
                 hint=f"Available tools: {', '.join(sorted(_TOOL_REGISTRY))}",
+            )
+
+        try:
+            # Lazy import: a broken tool module must still yield the
+            # structured error contract, not escape into transport prose.
+            func = _load_tool(name)
+        except Exception:
+            logger.exception("Failed to load tool %s", name)
+            return _err(
+                "INTERNAL_ERROR",
+                f"Tool '{name}' is unavailable.",
+                hint="Check the server logs for details.",
             )
 
         try:
