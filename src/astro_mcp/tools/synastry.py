@@ -155,6 +155,32 @@ def _midpoint_lon(lon1: float, lon2: float) -> float:
     return math.degrees(math.atan2(avg_sin, avg_cos)) % 360
 
 
+def _geographic_midpoint(
+    lat1: float, lon1: float, lat2: float, lon2: float,
+) -> tuple[float, float]:
+    """Great-circle geographic midpoint of two places.
+
+    Averaging lat/long arithmetically breaks wherever the pair straddles the
+    antimeridian (Tokyo x Los Angeles lands near Chad instead of the Arctic)
+    or near the poles. Converting both places to unit vectors, averaging, and
+    converting back yields the true great-circle midpoint in one shot.
+
+    Exactly antipodal inputs have a whole great circle of valid midpoints;
+    the equatorial point advancing from ``lon1`` is returned deterministically.
+    """
+    la1, lo1 = math.radians(lat1), math.radians(lon1)
+    la2, lo2 = math.radians(lat2), math.radians(lon2)
+    x1, y1, z1 = math.cos(la1) * math.cos(lo1), math.cos(la1) * math.sin(lo1), math.sin(la1)
+    x2, y2, z2 = math.cos(la2) * math.cos(lo2), math.cos(la2) * math.sin(lo2), math.sin(la2)
+    x, y, z = (x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2
+    if abs(x) < 1e-12 and abs(y) < 1e-12 and abs(z) < 1e-12:
+        delta = ((lon2 - lon1 + 540.0) % 360.0) - 180.0
+        return 0.0, ((lon1 + delta / 2 + 180.0) % 360.0) - 180.0
+    lon_mid = math.degrees(math.atan2(y, x))
+    lat_mid = math.degrees(math.atan2(z, math.hypot(x, y)))
+    return lat_mid, ((lon_mid + 180.0) % 360.0) - 180.0
+
+
 def calculate_composite_chart(
     person1_date: str | None = None,
     person1_time: str | None = None,
@@ -173,16 +199,32 @@ def calculate_composite_chart(
     n1 = _resolve_natal(person1_date, person1_time, person1_location, house_system, "person1")
     n2 = _resolve_natal(person2_date, person2_time, person2_location, house_system, "person2")
 
+    davison_location: dict[str, Any] | None = None
     if method == "davison":
         # Davison: a real chart cast for the midpoint in time and space.
+        # The space midpoint is the great-circle one; naive averaging of
+        # lat/long places e.g. Tokyo x Los Angeles in the wrong hemisphere.
         dav_jd = (n1.jd + n2.jd) / 2
-        lat = (n1.geo.lat + n2.geo.lat) / 2
-        lon = (n1.geo.lon + n2.geo.lon) / 2
+        lat, lon = _geographic_midpoint(
+            n1.geo.lat, n1.geo.lon, n2.geo.lat, n2.geo.lon
+        )
+        naive_lon = ((n1.geo.lon + n2.geo.lon) / 2 + 180.0) % 360.0 - 180.0
+        naive_lat = (n1.geo.lat + n2.geo.lat) / 2
         cusps, ascmc = calc_houses(dav_jd, lat, lon, n1.house_system)
         comp_planets = calc_all_planets(dav_jd, cusps, include_asteroids=False)
         comp_angles = build_angles(ascmc, cusps)
         comp_houses = build_house_cusps(cusps)
         cusp_list = cusps
+        davison_location = {
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "tz": "UTC",
+        }
+        if abs(lat - naive_lat) > 0.5 or abs(lon - naive_lon) > 0.5:
+            davison_location["note"] = (
+                "great-circle midpoint; differs from the naive coordinate "
+                "average because the pair straddles the antimeridian or a pole"
+            )
     else:
         # Midpoint composite: every point, including the angles, is the
         # midpoint of the corresponding pair.  Houses must then be derived from
@@ -229,6 +271,7 @@ def calculate_composite_chart(
     return {
         "method": method,
         "house_basis": "equal-from-composite-Asc" if method == "midpoint" else n1.house_system,
+        "davison_location": davison_location,
         "comp_planets": {k: serialize_point(v, degree_format) for k, v in comp_planets.items()},
         "comp_angles": {k: serialize_point(v, degree_format, include_house=False)
                         for k, v in comp_angles.items()},
