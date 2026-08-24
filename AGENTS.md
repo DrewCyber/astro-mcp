@@ -3,7 +3,7 @@
 ## Quality gates (all must pass before committing)
 
 ```bash
-pytest -q                      # coverage floor enforced via pyproject addopts (83%)
+pytest -q                      # coverage floor enforced via pyproject addopts (87%)
 ruff check src tests
 mypy --strict src
 ```
@@ -54,7 +54,10 @@ Raise the coverage floor when coverage grows; never lower it.
 
 - Personal material lives in ignored dirs (`tmp/`, `private/`, `context/`,
   `.kilo/` are excluded locally). Never `git add` personal files.
-- Commit messages are prefixed with `ox-alpha` per owner preference.
+- Commit messages are prefixed with llm model name.
+- History: the 2026-07-26 audit and 2026-08-22 review are fully remediated
+  and their reports retired; every fix is pinned by a regression test
+  (`tests/test_audit_regressions.py` plus the anchors below).
 
 ## Regression anchors
 
