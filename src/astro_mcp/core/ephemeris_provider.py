@@ -25,6 +25,32 @@ from astro_mcp.core.models import (
 
 logger = logging.getLogger(__name__)
 
+# Years covered by the installed .se1 files, detected at init time from the
+# file names (``sepl_18.se1`` spans centuries 18..23, i.e. 1800-2399). Used to
+# tell "date outside coverage" apart from "files missing" — the two are
+# indistinguishable in swisseph's own error output but need opposite fixes.
+_COVERED_YEARS: tuple[int, int] | None = None
+
+
+def _detect_covered_years(path: str) -> tuple[int, int] | None:
+    """(min_year, max_year) covered by the ``sepl_*.se1`` files in *path*."""
+    starts = []
+    for f in Path(path).glob("sepl_*.se1"):
+        suffix = f.stem.rsplit("_", 1)[-1]
+        if suffix.isdigit():
+            starts.append(int(suffix) * 100)
+    if not starts:
+        return None
+    return min(starts), max(starts) + 600 - 1
+
+
+def ephemeris_covered_years() -> tuple[int, int] | None:
+    """Covered year span of the installed data files, or None if undetected."""
+    global _COVERED_YEARS
+    if _COVERED_YEARS is None:
+        _COVERED_YEARS = _detect_covered_years(settings.ephe_path)
+    return _COVERED_YEARS
+
 # Flags requested for every body.  FLG_SWIEPH selects the high-precision
 # Swiss Ephemeris data files; see _check_calc_flags for why the *returned*
 # flags matter as much as the requested ones.
@@ -72,10 +98,12 @@ def init_ephemeris(ephe_path: str | None = None) -> None:
         )
 
     swe.set_ephe_path(path)
+    global _COVERED_YEARS
+    _COVERED_YEARS = _detect_covered_years(path)
     logger.info("Swiss Ephemeris initialised from %s", path)
 
 
-def _check_calc_flags(retflag: int, planet_id: int) -> None:
+def _check_calc_flags(retflag: int, planet_id: int, jd: float) -> None:
     """Validate the flags Swiss Ephemeris actually used for a calculation.
 
     ``swe.calc_ut`` does not raise when the requested ephemeris is unavailable
@@ -84,6 +112,11 @@ def _check_calc_flags(retflag: int, planet_id: int) -> None:
     Ephemeris by arcseconds (more for the outer planets and for dates far from
     J2000), which is enough to move a tight aspect in or out of orb.  Treat the
     substitution as an error rather than shipping degraded data unannounced.
+
+    The fallback has two distinct causes that need opposite fixes: the .se1
+    files are missing entirely, or the date lies outside their coverage.  The
+    installed file names tell them apart, so the error does not send a user
+    with a year-2500 query off to re-download files they already have.
     """
     if retflag < 0:
         raise AstroError(
@@ -91,6 +124,18 @@ def _check_calc_flags(retflag: int, planet_id: int) -> None:
             f"Swiss Ephemeris could not compute body {planet_id}.",
         )
     if retflag & swe.FLG_MOSEPH:
+        covered = ephemeris_covered_years()
+        if covered is not None:
+            lo, hi = covered
+            y, _, _ = swe.revjul(jd)[:3]
+            if y < lo or y > hi:
+                raise AstroError(
+                    "EPHEMERIS_OUT_OF_RANGE",
+                    (f"Date (JD {jd:.1f}, year ~{y}) is outside the coverage of "
+                     f"the installed Swiss Ephemeris data files ({lo}-{hi})."),
+                    hint=("Query dates within the covered span, or install "
+                          "extended-range files (see scripts/download_ephe.sh)."),
+                )
         raise AstroError(
             "EPHEMERIS_UNAVAILABLE",
             (f"Swiss Ephemeris fell back to the low-precision Moshier ephemeris "
@@ -183,7 +228,7 @@ def calc_planet(jd: float, planet_id: int) -> tuple[float, float]:
             f"Swiss Ephemeris could not compute body {planet_id}.",
             hint=message,
         ) from exc
-    _check_calc_flags(retflag, planet_id)
+    _check_calc_flags(retflag, planet_id, jd)
     return result[0], result[3]
 
 

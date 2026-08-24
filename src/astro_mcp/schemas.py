@@ -161,7 +161,13 @@ class ProgressionsInput(_BirthData):
 class SolarReturnInput(_BirthData):
     """Solar return chart — the exact moment the Sun returns to its natal longitude."""
 
-    year: int = Field(ge=1, le=3000, description="Calendar year of the return")
+    year: int = Field(
+        ge=1800, le=2400,
+        description=(
+            "Calendar year of the return (1800-2400: the span covered by the "
+            "bundled Swiss Ephemeris data files)"
+        ),
+    )
     return_location: Location | None = Field(
         default=None,
         description="Location for a relocated solar return; defaults to birth_location",
