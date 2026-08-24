@@ -142,6 +142,12 @@ def create_server() -> Server:
                 f"Tool '{name}' is unavailable.",
                 hint="Check the server logs for details.",
             )
+        if func is None:  # pragma: no cover - registry membership checked above
+            return _err(
+                "UNKNOWN_TOOL",
+                f"Tool '{name}' not found.",
+                hint=f"Available tools: {', '.join(sorted(_TOOL_REGISTRY))}",
+            )
 
         try:
             parsed = model.model_validate(arguments)
