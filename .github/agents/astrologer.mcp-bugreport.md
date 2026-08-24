@@ -2,15 +2,6 @@
 
 <!-- NEW ENTRIES GO DIRECTLY BELOW THIS LINE, NEWEST FIRST. -->
 
-## 2026-08-11 07:08 UTC
-Tool: calculate_secondary_progressions
-Type: docs-gap
-Input summary: birth 1965-07-28 10:56 Asia/Novosibirsk, progression_date 2026-08-11
-Observed: `prog_planets[].house` is the progressed house (prog Asc 21°37 Sco, prog MC 14°25 Vir; prog Sun 3°52 Lib reported house 10), while `calculate_natal_chart` houses are natal Placidus and `calculate_transits` houses are NATAL houses of the transit body. Three tools, three different house conventions, and only the transit one is documented in the parameter reference.
-Expected: house convention documented per tool, or field renamed (e.g. `prog_house`).
-Impact: Risk of misinterpreting a progressed planet as sitting in a natal house; interpretation here was done from aspect orbs, not house fields.
-Workaround used: Interpreted progressions via prog-to-natal aspects and angles, ignored the house field.
-
 No open issues.
 
 <!-- END OF ENTRIES -->
@@ -28,7 +19,7 @@ tools.
 - A `logic-error` entry is as valuable as a bug: the 2026-07-27 retraction below
   was self-filed, correct, and produced a real server improvement.
 
-Last cleared 2026-07-27.
+Last cleared 2026-08-24.
 
 Fixed and removed so far: Moon aspects missing from short windows, `output_tz`
 ignored, an overlong Ma-Sa separation date, an unknown timezone surfacing as
@@ -36,7 +27,11 @@ INTERNAL_ERROR, a waxing/waning misreading, `SN` rejected as a planet code by
 `find_aspect_exact_dates`, an `events_note` that blamed the 14-day threshold for
 an omission the caller had requested, transiting planets housed against the
 transit-moment chart instead of the natal cusps, and a lunation that had to be
-labelled with the queried day's Moon sign.
+labelled with the queried day's Moon sign. The progressed-house convention gap
+(2026-08-11) is documented in `astrologer.agent.md`: progressions carry
+`angles_method: "quotidian"` in their payload, and the prompt now states that
+prog houses are progressed-chart houses while natal/transit house fields are
+natal houses.
 
 ### The Full Moon thread, closed
 
