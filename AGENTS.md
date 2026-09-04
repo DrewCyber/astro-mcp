@@ -59,8 +59,10 @@ Raise the coverage floor when coverage grows; never lower it.
 ## Repo hygiene
 
 - Personal material lives in ignored dirs (`tmp/`, `private/`, `context/`,
-  `.kilo/` are excluded locally). Never `git add` personal files.
+  `.kilo/`, `.zcode/` are excluded locally). Never `git add` personal files.
 - Commit messages are prefixed with llm model name.
+- Releases: push a `v*` tag — that is the only trigger for the CI
+  docker-build job. Tests run on every push/PR regardless.
 - History: the 2026-07-26 audit and 2026-08-22 review are fully remediated
   and their reports retired; every fix is pinned by a regression test
   (`tests/test_audit_regressions.py` plus the anchors below).

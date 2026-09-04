@@ -33,7 +33,8 @@ custom connector instead of only as a local stdio process. See `DEPLOY.md`.
 - `render.yaml` blueprint and a one-click **Deploy to Render** button
   (free tier, no credit card) for personal remote instances.
 - CI `docker-build` job that builds the image and smoke-tests `/health`
-  and `/mcp` on every push.
+  and `/mcp`; triggered only by version tags (`v*`), while the test matrix
+  runs on every push and pull request.
 - `DEPLOY.md`: free hosting guide (RU/EN) — shared instance, Render,
   `cloudflared` tunnel, Cloud Run, Koyeb, keepalive and troubleshooting.
 - Explicit `starlette`/`uvicorn` dependencies (imported directly) and

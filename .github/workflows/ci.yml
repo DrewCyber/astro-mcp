@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -56,14 +57,16 @@ jobs:
         run: pytest -q
 
   # The remote-MCP image is what one-click deploys (Render, Cloud Run, Koyeb)
-  # build from; catch a broken Dockerfile before it ships.
+  # build from. Built only for version tags (release moments) — everyday
+  # pushes are already covered by the test matrix above.
   docker-build:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t astro-mcp:ci .
+        run: docker build -t "astro-mcp:${GITHUB_REF_NAME}" .
 
       - name: Smoke-test HTTP transport
         run: |
