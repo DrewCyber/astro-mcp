@@ -4,6 +4,59 @@ All notable changes to this project are documented here.
 The project follows semantic versioning; correctness fixes bump the patch
 version so downstream installs can tell broken from fixed builds.
 
+## [1.2.0] — 2026-09-04
+
+Output UX driven by real agent feedback: readable geocoding failures,
+significance-ranked aspects, quieter lunar transits, leaner degrees, an
+opt-in legend. **Contains breaking default changes** — see below.
+
+### Breaking (defaults and API)
+
+- `degree_format` now defaults to `"dec"` on all tools (was `"dms"`): the
+  DMS string `lon` is opt-in; numeric `deg` + `sign` are always present.
+  The ephemeris table no longer duplicates `deg` as a stringified `lon`
+  in dec mode.
+- `calculate_transits`: `include_moon_events: bool` is replaced by
+  `moon_events: "all" | "phases_void" | "none"` (default `None` →
+  `phases_void` for windows ≤ 14 days, `none` beyond). Lunations, current
+  phase, next lunations and void-of-course always remain in the `moon`
+  block.
+- Aspect lists are now ordered by significance (desc), not by orb alone;
+  every aspect entry gains a `sig` field (0–1: body weight × aspect
+  weight × orb tightness). Transit `aspect_events` stay chronological but
+  carry `sig`.
+- Natal and composite charts drop the mathematically guaranteed
+  Asc–Dsc / MC–IC / NN–SN oppositions by default
+  (`exclude_axis_pairs: true` restores them).
+
+### Added
+
+- `min_significance` (0–1) and `top_n` on natal, transits, synastry,
+  composite, progressions and solar return — filter/trim aspect lists
+  directly; `min_significance` also filters transit events.
+- `include_legend: true` on natal and transits attaches a one-shot
+  decoding dictionary for body/aspect/sign codes.
+- Geocoding: fuzzy fallback — a query that matches nothing is retried
+  ASCII-folded on its leading segment and the error hint offers
+  "Did you mean: …" candidates (never auto-accepted).
+
+### Fixed
+
+- **String geocoding via Nominatim was broken**: the rate limiter wrapped
+  the geolocator *object* instead of its bound `.geocode`, so every
+  string lookup died as an opaque `INTERNAL_ERROR`. Fakes in the test
+  suite masked this. The limiter now wraps the method and the geocoder is
+  called as a plain callable.
+- Rate-limited geocoding answers now say "rate-limited" instead of the
+  generic "service unavailable"; a garbage 200-response (bare `ValueError`
+  from geopy's coordinate parsing) maps to `GEOCODE_FAILED` instead of a
+  misleading `INPUT_ERROR`; error messages echo the caller's spelling
+  instead of the normalized cache key.
+- **Rectification's progressions technique never scored**: it read `p1`/`p2`
+  keys from the progressions payload, which serialises as `pp`/`np`.
+  Regression-pinned; scores for charts scored with the default technique
+  set will differ (correctly).
+
 ## [1.1.0] — 2026-09-04
 
 Remote deployment: the server can now be reached over HTTP as a claude.ai

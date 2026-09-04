@@ -7,12 +7,13 @@ import json
 import logging
 import threading
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+from geopy.exc import GeocoderRateLimited, GeocoderServiceError, GeocoderTimedOut
 from geopy.geocoders import Nominatim
 from timezonefinder import TimezoneFinder
 
@@ -26,10 +27,11 @@ _tf = TimezoneFinder()
 
 
 def _make_geocoder() -> Any:
+    """Uniform geocode callable: ``(query, timeout=..., **kwargs) -> Location | None``."""
     if settings.geocoding_provider == "opencage":
         if settings.opencage_api_key:
             from geopy.geocoders import OpenCage
-            return OpenCage(api_key=settings.opencage_api_key)
+            return OpenCage(api_key=settings.opencage_api_key).geocode
         # A misconfigured deployment must not run on the wrong service
         # indefinitely without a trace.
         logger.warning(
@@ -40,8 +42,15 @@ def _make_geocoder() -> Any:
 
     # Nominatim's usage policy caps anonymous traffic at 1 request/second;
     # bursty MCP clients otherwise risk 403 blocks of the shared user agent.
-    return RateLimiter(Nominatim(user_agent=settings.geocoding_user_agent),
-                       min_delay_seconds=1.0, max_retries=0)
+    # The limiter must wrap the *bound* .geocode method (the documented geopy
+    # pattern): wrapping the geolocator object leaves the limiter without a
+    # .geocode attribute, and every string lookup then died as an opaque
+    # INTERNAL_ERROR.
+    return RateLimiter(
+        Nominatim(user_agent=settings.geocoding_user_agent).geocode,
+        min_delay_seconds=1.0,
+        max_retries=0,
+    )
 
 
 _geocoder = _make_geocoder()
@@ -144,6 +153,36 @@ def _negative_record(key: str) -> None:
         _negative_failures[key] = time.monotonic()
 
 
+def _ascii_fold(text: str) -> str:
+    """Best-effort transliteration: 'Köln' -> 'Koln'."""
+    return " ".join(
+        unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().split()
+    )
+
+
+def _suggest_similar(key: str) -> list[str]:
+    """Nearest matches for a query that returned nothing, best-effort.
+
+    Retries once with the leading comma-segment, ASCII-folded: "Osinniki,
+    Russia" becomes "Osinniki", "Köln, Deutschland" becomes "Koln".
+    Suggestions are surfaced in the error hint and never auto-accepted — for
+    a birth chart a confidently wrong city is worse than a clear failure.
+    """
+    simplified = _ascii_fold(key.split(",")[0])
+    if not simplified or simplified == key:
+        return []
+    try:
+        candidates = _geocoder(simplified, timeout=10, exactly_one=False, limit=3)
+    except Exception:  # noqa: BLE001 - suggestions must never mask the real error
+        return []
+    names: list[str] = []
+    for cand in candidates or []:
+        name = (getattr(cand, "address", "") or "").split(",")[0].strip()
+        if name and name not in names:
+            names.append(name)
+    return names[:3]
+
+
 @functools.lru_cache(maxsize=settings.geocode_cache_size)
 def _geocode_lru(key: str) -> GeoLocation:
     """Network-backed geocode for an already-normalized key.
@@ -161,19 +200,41 @@ def _geocode_lru(key: str) -> GeoLocation:
             hint="Correct the name, or pass explicit {lat, lon, tz} coordinates.",
         )
     try:
-        location = _geocoder.geocode(key, timeout=10)
+        location = _geocoder(key, timeout=10)
+    except GeocoderRateLimited as exc:
+        raise AstroError(
+            "GEOCODE_FAILED",
+            f"Geocoding provider is rate-limited while looking up '{key}'.",
+            hint="Retry in a minute, or pass explicit {lat, lon, tz} coordinates.",
+        ) from exc
     except (GeocoderTimedOut, GeocoderServiceError) as exc:
         raise AstroError(
             "GEOCODE_FAILED",
             f"Geocoding service unavailable while looking up '{key}'.",
             hint="Retry, or pass explicit {lat, lon, tz} coordinates instead.",
         ) from exc
+    except ValueError as exc:
+        # geopy parses result coordinates with float(); a 200-response
+        # carrying garbage numbers raises a bare ValueError that used to
+        # escape as INPUT_ERROR — a misleading code for input that was fine.
+        raise AstroError(
+            "GEOCODE_FAILED",
+            f"Geocoding server returned an invalid response for '{key}'.",
+            hint="Retry later, or pass explicit {lat, lon, tz} coordinates.",
+        ) from exc
     if location is None:
+        suggestions = _suggest_similar(key)
         _negative_record(key)
+        hint = "Provide the full city name (e.g. 'Ulm, Germany') or coordinates."
+        if suggestions:
+            hint = (
+                f"Did you mean: {' / '.join(suggestions)}? "
+                "Otherwise pass explicit {lat, lon, tz} coordinates."
+            )
         raise AstroError(
             "GEOCODE_FAILED",
             f"City '{key}' not found.",
-            hint="Provide the full city name (e.g. 'Ulm, Germany') or coordinates.",
+            hint=hint,
         )
     tz = _tf.timezone_at(lat=location.latitude, lng=location.longitude)
     if tz is None:
@@ -204,7 +265,15 @@ def geocode(city: str) -> GeoLocation:
     disabled, a small JSON file so lookups survive server restarts. Failed
     lookups are negatively-cached for :data:`NEGATIVE_TTL_SECONDS`.
     """
-    return _geocode_lru(normalize_place_key(city))
+    key = normalize_place_key(city)
+    try:
+        return _geocode_lru(key)
+    except AstroError as exc:
+        # Messages are built inside the LRU on the normalized key; the caller
+        # should see the string they actually typed.
+        if city != key and key in exc.message:
+            exc.message = exc.message.replace(key, city)
+        raise
 
 
 def clear_geocode_cache() -> None:

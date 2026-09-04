@@ -6,7 +6,14 @@ import json
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import lon_to_sign_info
-from astro_mcp.core.models import Aspect, ChartPoint, HouseCusp
+from astro_mcp.core.models import (
+    ASPECT_NAMES,
+    PLANET_NAMES,
+    SIGN_NAMES,
+    Aspect,
+    ChartPoint,
+    HouseCusp,
+)
 
 # ---------------------------------------------------------------------------
 # Degree formatting
@@ -27,7 +34,7 @@ def decimal_to_dms(decimal_deg: float) -> str:
 
 def serialize_point(
     point: ChartPoint,
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     include_house: bool = True,
 ) -> dict[str, Any]:
     """
@@ -58,10 +65,30 @@ def serialize_aspect(asp: Aspect) -> dict[str, Any]:
         "asp": asp.aspect_type,
         "orb": asp.orb,
         "apply": asp.applying,
+        "sig": asp.significance,
     }
 
 
-def serialize_house(hc: HouseCusp, degree_format: str = "dms") -> dict[str, Any]:
+def build_legend() -> dict[str, Any]:
+    """One-shot decoding dictionary for the wire format's abbreviations.
+
+    Emitted only when the caller passes ``include_legend=true``; the default
+    stays off so the token budget is not spent on every call.
+    """
+    return {
+        "bodies": PLANET_NAMES,
+        "aspects": ASPECT_NAMES,
+        "signs": SIGN_NAMES,
+        "other": {
+            "R": "retrograde (present only when true)",
+            "apply": "aspect is applying (tightening), not separating",
+            "sig": "significance 0-1: body weight x aspect weight x orb tightness",
+            "deg": "absolute ecliptic longitude 0-360; 'lon' (dms mode) is degrees within the sign",
+        },
+    }
+
+
+def serialize_house(hc: HouseCusp, degree_format: str = "dec") -> dict[str, Any]:
     sign, sign_lon = lon_to_sign_info(hc.lon_decimal)
     if degree_format == "dms":
         cusp_str = decimal_to_dms(sign_lon) + sign
@@ -88,7 +115,7 @@ def serialize_natal(
     angles: dict[str, ChartPoint],
     houses: list[HouseCusp],
     aspects: list[Aspect],
-    degree_format: str = "dms",
+    degree_format: str = "dec",
 ) -> dict[str, Any]:
     return {
         "meta": meta,

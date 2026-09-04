@@ -22,6 +22,7 @@ from astro_mcp.core.models import (
     Aspect,
     ChartPoint,
     HouseCusp,
+    aspect_significance,
 )
 
 logger = logging.getLogger(__name__)
@@ -530,8 +531,11 @@ def find_aspects(
                 orb = abs(dist - asp_angle)
                 if orb <= orb_limit:
                     applying = is_applying(p1.lon_decimal, p1.speed, p2.lon_decimal, p2.speed, asp_angle)
-                    aspects.append(Aspect(k1, k2, asp_code, round(orb, 2), applying))
-    aspects.sort(key=lambda a: a.orb)
+                    aspects.append(Aspect(
+                        k1, k2, asp_code, round(orb, 2), applying,
+                        significance=aspect_significance(k1, k2, asp_code, orb, orb_limit),
+                    ))
+    aspects.sort(key=lambda a: (a.orb, -a.significance))
     return aspects
 
 

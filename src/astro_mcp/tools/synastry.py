@@ -17,7 +17,7 @@ from astro_mcp.core.ephemeris_provider import (
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_house, serialize_point
-from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart, rank_aspects
 from astro_mcp.tools.natal import compute_natal, dedupe_aspects
 
 HARMONY_ASPECTS = frozenset({"Cnj", "Tri", "Sex"})
@@ -60,7 +60,9 @@ def calculate_synastry(
     person2_location: str | dict[str, Any] | None = None,
     house_system: str = "P",
     orbs: dict[str, float] | None = None,
-    degree_format: str = "dms",
+    degree_format: str = "dec",
+    min_significance: float | None = None,
+    top_n: int | None = None,
 ) -> dict[str, Any]:
     """Tool 7: Synastry — cross-aspects and house overlays between two charts."""
     n1 = _resolve_natal(person1_date, person1_time, person1_location, house_system, "person1")
@@ -79,6 +81,8 @@ def calculate_synastry(
         pts1, pts2, custom_orbs=used_orbs, angle_orb_keys=set(ANGLE_KEYS)
     )
 
+    # Compatibility indicators describe the whole relationship, so they are
+    # computed on the untrimmed aspect set; ranking only shapes the list.
     aspects_out: list[dict[str, Any]] = [
         {
             "p1_planet": a.point1,
@@ -86,8 +90,9 @@ def calculate_synastry(
             "asp": a.aspect_type,
             "orb": a.orb,
             "harmony": a.aspect_type in HARMONY_ASPECTS,
+            "sig": a.significance,
         }
-        for a in cross_aspects
+        for a in rank_aspects(cross_aspects, min_significance=min_significance, top_n=top_n)
     ]
 
     # House overlays: each person's planets located in the OTHER person's
@@ -190,7 +195,10 @@ def calculate_composite_chart(
     person2_location: str | dict[str, Any] | None = None,
     house_system: str = "P",
     method: str = "midpoint",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
+    exclude_axis_pairs: bool = True,
+    min_significance: float | None = None,
+    top_n: int | None = None,
 ) -> dict[str, Any]:
     """Tool 8: Composite chart via midpoints or Davison."""
     if method not in {"midpoint", "davison"}:
@@ -264,8 +272,11 @@ def calculate_composite_chart(
     }
 
     all_comp: dict[str, ChartPoint] = {**comp_planets, **comp_angles}
-    comp_aspects = dedupe_aspects(
-        find_aspects(all_comp, all_comp, angle_orb_keys={"Asc", "MC"})
+    comp_aspects = rank_aspects(
+        dedupe_aspects(find_aspects(all_comp, all_comp, angle_orb_keys={"Asc", "MC"})),
+        min_significance=min_significance,
+        top_n=top_n,
+        exclude_derived=exclude_axis_pairs,
     )
 
     return {
@@ -277,7 +288,8 @@ def calculate_composite_chart(
                         for k, v in comp_angles.items()},
         "comp_houses": [serialize_house(h, degree_format) for h in comp_houses],
         "comp_aspects": [
-            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb}
+            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb,
+             "sig": a.significance}
             for a in comp_aspects
         ],
     }

@@ -21,9 +21,13 @@ DegreeFormat = Literal["dms", "dec"]
 AspectCode = Literal["Cnj", "Opp", "Tri", "Squ", "Sex", "SSq", "Ses"]
 StepCode = Literal["1h", "2h", "3h", "6h", "12h", "1d", "7d", "30d"]
 Technique = Literal["transits", "progressions", "profections"]
+MoonEventsMode = Literal["all", "phases_void", "none"]
 
 DATE_DESC = "Date as YYYY-MM-DD"
 TIME_DESC = "Local wall-clock time as HH:MM or HH:MM:SS"
+
+_SIG_DESC = "Drop aspects (and transit events) below this significance, 0-1"
+_TOP_DESC = "Keep only the N most significant aspects"
 
 
 class Coordinates(BaseModel):
@@ -91,9 +95,22 @@ class NatalChartInput(_BirthData):
     """
 
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
     include_asteroids: bool = False
     include_arabic_parts: bool = False
+    exclude_axis_pairs: bool = Field(
+        default=True,
+        description=(
+            "Drop the mathematically guaranteed oppositions Asc-Dsc, MC-IC and "
+            "NN-SN (they are always exact 180 deg by construction)"
+        ),
+    )
+    min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)
+    top_n: int | None = Field(default=None, ge=1, description=_TOP_DESC)
+    include_legend: bool = Field(
+        default=False,
+        description="Attach a one-time legend decoding body/aspect/sign codes",
+    )
 
 
 class TransitsInput(_BirthData):
@@ -127,18 +144,29 @@ class TransitsInput(_BirthData):
         default=False,
         description="Add Ceres (Ce), Pallas (Pa), Juno (Jun) and Vesta (Ves)",
     )
-    include_moon_events: bool | None = Field(
+    moon_events: MoonEventsMode | None = Field(
         default=None,
         description=(
-            "Include lunar contacts in aspect_events. Defaults to true for "
-            "windows of 14 days or less and false beyond that, where the Moon "
-            "aspects every natal point and buries the slower transits"
+            "Lunar contacts in aspect_events: 'all' (every Moon aspect), "
+            "'phases_void' (only New/Full Moon contacts; the current phase, "
+            "next lunations and void-of-course always stay in the 'moon' block), "
+            "or 'none'. Default: 'phases_void' for windows of 14 days or less, "
+            "'none' beyond — the Moon aspects every natal point and would bury "
+            "the slower transits"
         ),
     )
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
     max_orb: float | None = Field(
         default=3.0, ge=0.0, le=15.0, description="Only report aspects within this orb"
+    )
+    min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)
+    top_n: int | None = Field(
+        default=None, ge=1, description="Keep only the N most significant current aspects"
+    )
+    include_legend: bool = Field(
+        default=False,
+        description="Attach a one-time legend decoding body/aspect/sign codes",
     )
 
 
@@ -155,10 +183,12 @@ class ProgressionsInput(_BirthData):
     progression_date: str = Field(description=DATE_DESC)
     include_solar_arc: bool = False
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
     max_orb: float | None = Field(
         default=3.0, ge=0.0, le=15.0, description="Only report aspects within this orb"
     )
+    min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)
+    top_n: int | None = Field(default=None, ge=1, description=_TOP_DESC)
 
 
 class SolarReturnInput(_BirthData):
@@ -179,7 +209,9 @@ class SolarReturnInput(_BirthData):
         default=None, description="Deprecated alias for return_location"
     )
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
+    min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)
+    top_n: int | None = Field(default=None, ge=1, description=_TOP_DESC)
 
 
 class LunarReturnInput(_BirthData):
@@ -193,7 +225,7 @@ class LunarReturnInput(_BirthData):
         default=None, description="Defaults to birth_location"
     )
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
 
 
 class RectificationInput(_ToolInput):
@@ -245,7 +277,9 @@ class SynastryInput(_TwoPeople):
     orbs: dict[str, float] | None = Field(
         default=None, description="Per-aspect orb overrides in degrees"
     )
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
+    min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)
+    top_n: int | None = Field(default=None, ge=1, description=_TOP_DESC)
 
 
 class CompositeInput(_TwoPeople):
@@ -257,7 +291,13 @@ class CompositeInput(_TwoPeople):
 
     method: Literal["midpoint", "davison"] = "midpoint"
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
+    exclude_axis_pairs: bool = Field(
+        default=True,
+        description="Drop the mathematically guaranteed Asc-Dsc / MC-IC / NN-SN oppositions",
+    )
+    min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)
+    top_n: int | None = Field(default=None, ge=1, description=_TOP_DESC)
 
 
 class ProfectionsInput(_BirthData):
@@ -270,7 +310,7 @@ class ProfectionsInput(_BirthData):
 
     target_date: str = Field(description=DATE_DESC)
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
 
 
 class PlanetaryHoursInput(_ToolInput):
@@ -297,7 +337,7 @@ class ArabicPartsInput(_BirthData):
         default=None, description="Part codes, or ['all']. Defaults to all parts."
     )
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
     include_transits_date: str | None = Field(
         default=None,
         description=f"{DATE_DESC}. Adds transit activations of the lots on this date.",
@@ -322,7 +362,7 @@ class EphemerisInput(_ToolInput):
     output_tz: str = Field(default="UTC", description="IANA timezone for the returned times")
     include_speed: bool = False
     include_retrograde: bool = True
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
 
 
 class AspectDatesInput(_ToolInput):
@@ -345,7 +385,7 @@ class AspectDatesInput(_ToolInput):
     )
     orb: float = Field(default=1.0, gt=0.0, le=15.0, description="Orb used to bracket a pass")
     mode: Literal["auto", "transit-to-transit", "transit-to-natal"] = "auto"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
 
 
 class AntisciaInput(_BirthData):
@@ -362,7 +402,7 @@ class AntisciaInput(_BirthData):
         description=f"{DATE_DESC}. Adds transit contacts to the antiscia on this date.",
     )
     house_system: HouseSystem = "P"
-    degree_format: DegreeFormat = "dms"
+    degree_format: DegreeFormat = "dec"
 
 
 #: tool name -> input model. Keys must match ``server._TOOL_REGISTRY``.

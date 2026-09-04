@@ -32,7 +32,7 @@ def calculate_profections(
     birth_location: str | dict[str, Any] | None = None,
     target_date: str = "",
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
 ) -> dict[str, Any]:
     """
     Tool 9: Annual profections — each year the Ascendant advances one house (30°).

@@ -161,16 +161,13 @@ def _build_ephemeris_rows(
     while jd <= jd_end:
         lon, speed = calc_planet(jd, pid)
         sign, sign_lon = lon_to_sign_info(lon)
+        row: dict[str, Any] = {"dt": _format_dt_for_tz(jd, step_jd, output_tz)}
+        # In dec mode there is no string form: "deg" carries the same number
+        # and a stringified copy would be pure duplication.
         if degree_format == "dms":
-            lon_str = decimal_to_dms(sign_lon) + sign
-        else:
-            lon_str = str(round(lon % 360, 2))
-
-        row: dict[str, Any] = {
-            "dt": _format_dt_for_tz(jd, step_jd, output_tz),
-            "lon": lon_str,
-            "deg": round(lon % 360, 2),
-        }
+            row["lon"] = decimal_to_dms(sign_lon) + sign
+        row["deg"] = round(lon % 360, 2)
+        row["sign"] = sign
         if include_retrograde and speed < 0:
             row["R"] = True
         if include_speed:
@@ -191,7 +188,7 @@ def get_ephemeris(
     output_tz: str = "UTC",
     include_speed: bool = False,
     include_retrograde: bool = True,
-    degree_format: str = "dms",
+    degree_format: str = "dec",
 ) -> dict[str, Any]:
     """Tool 12: Ephemeris table for a planet over a date range."""
     planets = [planet] if isinstance(planet, str) else list(planet)
@@ -279,7 +276,7 @@ def find_aspect_exact_dates(
     birth_location: str | dict[str, Any] | None = None,
     orb: float = 1.0,
     mode: str = "auto",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
 ) -> dict[str, Any]:
     """Tool 13: Find exact dates of a specific aspect between two bodies.
 

@@ -238,7 +238,10 @@ def _score_candidate(
                 birth_date=birth_date,
             )
             for asp in prog.get("prog_to_natal_aspects", []):
-                if asp.get("p2") not in TIME_SENSITIVE_POINTS:
+                # Serialized as pp/np (progression point / natal point); the
+                # previous p1/p2 reads always evaluated to None, silently
+                # disabling the whole progressions technique.
+                if asp.get("np") not in TIME_SENSITIVE_POINTS:
                     continue
                 corr_score = score_event_match(asp["orb"], asp["asp"], "progressions")
                 if corr_score > 1:
@@ -247,8 +250,8 @@ def _score_candidate(
                         "event_date": event_date,
                         "event_type": event_type,
                         "technique": "progressions",
-                        "indicators": [{"planet": asp.get("p1"), "asp": asp["asp"],
-                                        "point": asp.get("p2"), "orb": round(asp["orb"], 2)}],
+                        "indicators": [{"planet": asp.get("pp"), "asp": asp["asp"],
+                                        "point": asp.get("np"), "orb": round(asp["orb"], 2)}],
                         "score": round(corr_score, 2),
                     })
 

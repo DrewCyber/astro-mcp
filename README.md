@@ -167,6 +167,12 @@ Supported codes across tools:
 - `SN` South Node
 - Asteroids (where `include_asteroids` is supported): `Ce` Ceres, `Pa` Pallas, `Jun` Juno, `Ves` Vesta
 
+Pass `include_legend: true` to `calculate_natal_chart` or `calculate_transits`
+to get a one-shot decoding dictionary for all codes. Aspect entries carry a
+`sig` field (0–1 significance: body weight × aspect weight × orb tightness);
+`min_significance` / `top_n` trim the lists, and `degree_format` defaults to
+`"dec"` (`"dms"` restores human-readable degree strings).
+
 ## API Notes
 
 - `get_ephemeris` accepts either a single `planet` or a list of planets.

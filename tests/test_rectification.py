@@ -125,3 +125,26 @@ def test_non_exact_events_do_not_influence_scores():
             ],
         )
     assert exc.value.code == "TOO_FEW_EVENTS"
+
+
+# --- 1.2.0: the progressions branch actually scores --------------------------
+
+def test_progressions_technique_produces_correlations():
+    """Regression: rectification read p1/p2 keys from the progressions payload,
+    which serialises as pp/np — the technique silently never matched."""
+    from astro_mcp.tools.rectification import calculate_rectification_hints
+
+    result = calculate_rectification_hints(
+        **BIRTH, birth_time="12:00", events=EVENTS,
+        techniques=["progressions"],
+    )
+    assert result["mode"] == "verification"
+    progressions = [
+        c for c in result["correlations"] if c["technique"] == "progressions"
+    ]
+    assert progressions, (
+        "the progressions branch must contribute correlations after the pp/np fix"
+    )
+    for corr in progressions:
+        for ind in corr["indicators"]:
+            assert ind["planet"], "indicator planets must resolve, not be None"

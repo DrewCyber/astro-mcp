@@ -42,6 +42,7 @@ class Aspect:
     aspect_type: str     # "Cnj" | "Opp" | ...
     orb: float
     applying: bool
+    significance: float = 0.0   # 0..1, see aspect_significance()
 
 
 @dataclass
@@ -163,6 +164,104 @@ ASPECT_ANGLES: dict[str, float] = {
     "Tri": 120.0,
     "Ses": 135.0,
     "Opp": 180.0,
+}
+
+# Pairs whose opposition is a mathematical identity, not an aspect: Dsc is
+# Asc+180, IC is MC+180, SN is NN+180 by construction. They always show up as
+# exact 180°/0.0-orb "aspects" and carry no interpretive weight, so natal and
+# composite outputs drop them by default (exclude_axis_pairs).
+DERIVED_OPPOSITION_PAIRS: frozenset[frozenset[str]] = frozenset(
+    {frozenset(p) for p in (("Asc", "Dsc"), ("MC", "IC"), ("NN", "SN"))}
+)
+
+
+def is_derived_opposition(point1: str, point2: str) -> bool:
+    """True when the pair is an axis identity (Asc-Dsc, MC-IC, NN-SN)."""
+    return frozenset((point1, point2)) in DERIVED_OPPOSITION_PAIRS
+
+
+# Interpretive weight of each body for aspect ranking (0..1). Personal planets
+# dominate a chart's texture; transpersonal bodies colour generations more than
+# individuals; angles/nodes/lilith/asteroids carry narrower meaning.
+BODY_WEIGHTS: dict[str, float] = {
+    "Su": 1.0, "Mo": 1.0, "Me": 1.0, "Ve": 1.0, "Ma": 1.0,   # personal
+    "Ju": 0.75, "Sa": 0.75,                                   # social
+    "Ur": 0.6, "Ne": 0.6, "Pl": 0.6,                          # transpersonal
+    "Asc": 0.7, "MC": 0.7,
+    "Dsc": 0.5, "IC": 0.5, "NN": 0.5, "SN": 0.5,
+    "Ch": 0.45, "Li": 0.35,
+    "Ce": 0.3, "Pa": 0.3, "Jun": 0.3, "Ves": 0.3,             # asteroids
+}
+_UNKNOWN_BODY_WEIGHT = 0.4
+
+# Weight of each aspect type for ranking (0..1): major aspects first, the
+# minors (semi-square, sesquiquadrate) carry distinctly less.
+ASPECT_WEIGHTS: dict[str, float] = {
+    "Cnj": 1.0, "Opp": 0.95, "Tri": 0.85, "Squ": 0.85,
+    "Sex": 0.7, "SSq": 0.5, "Ses": 0.5,
+}
+_UNKNOWN_ASPECT_WEIGHT = 0.4
+
+
+def aspect_significance(
+    point1: str, point2: str, aspect_type: str, orb: float, orb_allowed: float
+) -> float:
+    """Rank an aspect's interpretive importance on a 0..1 scale.
+
+    Combines how weighted the two bodies are (mean), how major the aspect type
+    is, and how tight the orb is relative to what was allowed for it. The scale
+    is relative within one chart, not an absolute truth meter.
+    """
+    pair = (
+        BODY_WEIGHTS.get(point1, _UNKNOWN_BODY_WEIGHT)
+        + BODY_WEIGHTS.get(point2, _UNKNOWN_BODY_WEIGHT)
+    ) / 2
+    kind = ASPECT_WEIGHTS.get(aspect_type, _UNKNOWN_ASPECT_WEIGHT)
+    tightness = 0.0 if orb_allowed <= 0 else max(0.0, 1.0 - orb / orb_allowed)
+    return round(min(1.0, pair * kind * tightness), 2)
+
+
+def rank_aspects(
+    aspects: list[Aspect],
+    min_significance: float | None = None,
+    top_n: int | None = None,
+    exclude_derived: bool = False,
+) -> list[Aspect]:
+    """Order aspects by significance (desc, orb asc as tiebreak) and trim.
+
+    Presentation-layer helper shared by every tool that serialises an aspect
+    list; callers keep the unfiltered full-precision data internally.
+    """
+    ranked = sorted(aspects, key=lambda a: (-a.significance, a.orb))
+    if exclude_derived:
+        ranked = [a for a in ranked if not is_derived_opposition(a.point1, a.point2)]
+    if min_significance is not None:
+        ranked = [a for a in ranked if a.significance >= min_significance]
+    if top_n is not None:
+        ranked = ranked[:top_n]
+    return ranked
+
+
+# Human-readable names for the include_legend payload.
+PLANET_NAMES: dict[str, str] = {
+    "Su": "Sun", "Mo": "Moon", "Me": "Mercury", "Ve": "Venus", "Ma": "Mars",
+    "Ju": "Jupiter", "Sa": "Saturn", "Ur": "Uranus", "Ne": "Neptune",
+    "Pl": "Pluto", "NN": "North Node", "SN": "South Node",
+    "Li": "Black Moon Lilith", "Ch": "Chiron", "Ce": "Ceres",
+    "Pa": "Pallas", "Jun": "Juno", "Ves": "Vesta",
+    "Asc": "Ascendant", "MC": "Midheaven", "Dsc": "Descendant", "IC": "Imum Coeli",
+}
+
+ASPECT_NAMES: dict[str, str] = {
+    "Cnj": "conjunction", "Opp": "opposition", "Tri": "trine",
+    "Squ": "square", "Sex": "sextile", "SSq": "semi-square",
+    "Ses": "sesquiquadrate",
+}
+
+SIGN_NAMES: dict[str, str] = {
+    "Ari": "Aries", "Tau": "Taurus", "Gem": "Gemini", "Can": "Cancer",
+    "Leo": "Leo", "Vir": "Virgo", "Lib": "Libra", "Sco": "Scorpio",
+    "Sag": "Sagittarius", "Cap": "Capricorn", "Aqu": "Aquarius", "Pis": "Pisces",
 }
 
 # Chaldean order for planetary hours

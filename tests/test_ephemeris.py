@@ -14,8 +14,11 @@ def test_ephemeris_basic():
     assert "rows" in result
     assert len(result["rows"]) >= 7
     for row in result["rows"]:
-        assert "lon" in row
+        # dec mode (the default since 1.2.0): numeric degrees only, no
+        # stringified duplicate
+        assert "lon" not in row
         assert "deg" in row
+        assert "sign" in row
         assert 0 <= row["deg"] < 360
 
 

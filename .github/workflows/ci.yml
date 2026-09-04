@@ -53,7 +53,7 @@ jobs:
         run: mypy src
 
       - name: Test
-        # Coverage floor lives in pyproject addopts (--cov-fail-under=83).
+        # Coverage floor lives in pyproject addopts (--cov-fail-under=88).
         run: pytest -q
 
   # Release image: built and published to GitHub Container Registry only for

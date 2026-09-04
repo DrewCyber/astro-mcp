@@ -15,7 +15,7 @@ from astro_mcp.core.ephemeris_provider import (
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart, rank_aspects
 from astro_mcp.tools.natal import compute_natal, dedupe_aspects
 
 
@@ -26,9 +26,11 @@ def calculate_secondary_progressions(
     progression_date: str = "",
     include_solar_arc: bool = False,
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     max_orb: float | None = 3.0,
     chart: NatalChart | None = None,
+    min_significance: float | None = None,
+    top_n: int | None = None,
 ) -> dict[str, Any]:
     """
     Secondary progressions: each day after birth = one year of life.
@@ -95,6 +97,11 @@ def calculate_secondary_progressions(
     prog_planets_out["Asc"] = serialize_point(prog_angles["Asc"], degree_format, include_house=False)
     prog_planets_out["MC"] = serialize_point(prog_angles["MC"], degree_format, include_house=False)
 
+    # max_orb is a relevance cut and precedes the significance ranking so the
+    # two filters cannot disagree about what was eligible.
+    p2n_in_orb = [a for a in p2n if max_orb is None or a.orb <= max_orb]
+    p2p_in_orb = [a for a in p2p if max_orb is None or a.orb <= max_orb]
+
     result: dict[str, Any] = {
         "prog_date": progression_date,
         "prog_age": round(age_years, 2),
@@ -107,22 +114,16 @@ def calculate_secondary_progressions(
         # label rather than bare numbers.
         "angles_method": "quotidian",
         "prog_planets": prog_planets_out,
-        "prog_to_natal_aspects": sorted(
-            (
-                {"pp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb, "apply": a.applying}
-                for a in p2n
-                if max_orb is None or a.orb <= max_orb
-            ),
-            key=lambda a: a["orb"],
-        ),
-        "prog_to_prog_aspects": sorted(
-            (
-                {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb}
-                for a in p2p
-                if max_orb is None or a.orb <= max_orb
-            ),
-            key=lambda a: a["orb"],
-        ),
+        "prog_to_natal_aspects": [
+            {"pp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb,
+             "apply": a.applying, "sig": a.significance}
+            for a in rank_aspects(p2n_in_orb, min_significance, top_n)
+        ],
+        "prog_to_prog_aspects": [
+            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb,
+             "sig": a.significance}
+            for a in rank_aspects(p2p_in_orb, min_significance, top_n)
+        ],
     }
 
     if include_solar_arc:

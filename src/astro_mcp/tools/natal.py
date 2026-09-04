@@ -14,9 +14,9 @@ from astro_mcp.core.ephemeris_provider import (
     resolve_house_system,
     to_jd,
 )
-from astro_mcp.core.formatters import serialize_natal, strip_nulls
+from astro_mcp.core.formatters import build_legend, serialize_natal, strip_nulls
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ANGLE_KEYS, Aspect, NatalChart
+from astro_mcp.core.models import ANGLE_KEYS, Aspect, NatalChart, rank_aspects
 from astro_mcp.core.moon import moon_phase
 
 
@@ -100,9 +100,13 @@ def calculate_natal_chart(
     birth_time: str,
     birth_location: str | dict[str, Any],
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     include_asteroids: bool = False,
     include_arabic_parts: bool = False,
+    exclude_axis_pairs: bool = True,
+    min_significance: float | None = None,
+    top_n: int | None = None,
+    include_legend: bool = False,
 ) -> dict[str, Any]:
     """
     Compute a full natal chart.
@@ -112,8 +116,17 @@ def calculate_natal_chart(
         birth_date, birth_time, birth_location, house_system, include_asteroids
     )
 
+    # Ranking/filtering is presentation-only: compute_natal keeps the full
+    # unfiltered aspect set for the tools that build on it.
+    aspects = rank_aspects(
+        chart.aspects,
+        min_significance=min_significance,
+        top_n=top_n,
+        exclude_derived=exclude_axis_pairs,
+    )
+
     result = serialize_natal(
-        chart.meta, chart.planets, chart.angles, chart.houses, chart.aspects, degree_format
+        chart.meta, chart.planets, chart.angles, chart.houses, aspects, degree_format
     )
     # Reported rather than left to the caller: deriving the phase from the two
     # longitudes is a classic source of waxing/waning errors.
@@ -125,5 +138,8 @@ def calculate_natal_chart(
             chart.planets, chart.angles, chart.houses, degree_format,
             is_day=chart.is_day,
         )
+
+    if include_legend:
+        result["legend"] = build_legend()
 
     return result

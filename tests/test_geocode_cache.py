@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from geopy.exc import GeocoderRateLimited
 
 from astro_mcp.config import settings
 from astro_mcp.core import geocoding
@@ -13,13 +14,18 @@ from astro_mcp.core.errors import AstroError
 
 
 class _FakeGeocoder:
-    """Stands in for Nominatim and counts how often it is consulted."""
+    """Stands in for the geocode callable and counts how often it is consulted."""
 
     def __init__(self) -> None:
         self.calls = 0
 
-    def geocode(self, city: str, timeout: int = 10) -> Any:
+    def __call__(self, city: str, timeout: int = 10, **kwargs: Any) -> Any:
         self.calls += 1
+        if kwargs.get("exactly_one") is False:
+            return [
+                SimpleNamespace(latitude=41.6, longitude=41.6, address="Batumi, Adjara, Georgia"),
+                SimpleNamespace(latitude=41.5, longitude=41.5, address="Batumi Station, Georgia"),
+            ]
         return SimpleNamespace(
             latitude=41.61689, longitude=41.607043, address="Batumi, Georgia"
         )
@@ -103,19 +109,23 @@ class _NotFoundGeocoder:
     def __init__(self) -> None:
         self.calls = 0
 
-    def geocode(self, city: str, timeout: int = 10) -> Any:
+    def __call__(self, city: str, timeout: int = 10, **kwargs: Any) -> Any:
         self.calls += 1
         return None
+
+
+def _isolate(fake: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "geocode_cache_path", str(tmp_path / "geocode.json"))
+    monkeypatch.setattr(geocoding, "_geocoder", fake)
+    monkeypatch.setattr(geocoding, "_disk_cache", None)
+    geocoding.clear_geocode_cache()
 
 
 def test_failed_lookup_is_negatively_cached(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _NotFoundGeocoder()
-    monkeypatch.setattr(settings, "geocode_cache_path", str(tmp_path / "geocode.json"))
-    monkeypatch.setattr(geocoding, "_geocoder", fake)
-    monkeypatch.setattr(geocoding, "_disk_cache", None)
-    geocoding.clear_geocode_cache()
+    _isolate(fake, tmp_path, monkeypatch)
 
     for _ in range(3):
         with pytest.raises(AstroError) as exc:
@@ -138,7 +148,7 @@ def test_successful_lookup_clears_negative_memory(
         def __init__(self) -> None:
             self.calls = 0
 
-        def geocode(self, city: str, timeout: int = 10) -> Any:
+        def __call__(self, city: str, timeout: int = 10, **kwargs: Any) -> Any:
             self.calls += 1
             if self.calls == 1:
                 return None
@@ -147,9 +157,8 @@ def test_successful_lookup_clears_negative_memory(
             )
 
     fake = FlakyThenFound()
+    _isolate(fake, tmp_path, monkeypatch)
     monkeypatch.setattr(settings, "geocode_cache_path", "")  # disk layer off
-    monkeypatch.setattr(geocoding, "_geocoder", fake)
-    geocoding.clear_geocode_cache()
 
     with pytest.raises(AstroError):
         geocoding.geocode("Batumi")
@@ -162,3 +171,69 @@ def test_successful_lookup_clears_negative_memory(
 def test_normalize_place_key():
     assert geocoding.normalize_place_key("  Ulm,   Germany ") == "ulm, germany"
     assert geocoding.normalize_place_key("ULM") == geocoding.normalize_place_key("ulm")
+
+
+# --- 1.2.0 error clarity -----------------------------------------------------
+
+def test_rate_limit_gets_its_own_message(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RateLimited:
+        def __call__(self, city: str, timeout: int = 10, **kwargs: Any) -> Any:
+            raise GeocoderRateLimited("HTTP 429")
+
+    _isolate(RateLimited(), tmp_path, monkeypatch)
+    with pytest.raises(AstroError) as exc:
+        geocoding.geocode("Moscow")
+    assert exc.value.code == "GEOCODE_FAILED"
+    assert "rate-limited" in exc.value.message
+    assert "lat" in exc.value.hint
+
+
+def test_garbage_response_is_geocode_failed_not_input_error(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Garbage:
+        def __call__(self, city: str, timeout: int = 10, **kwargs: Any) -> Any:
+            raise ValueError("could not convert string to float: 'NaN-ish'")
+
+    _isolate(Garbage(), tmp_path, monkeypatch)
+    with pytest.raises(AstroError) as exc:
+        geocoding.geocode("Moscow")
+    assert exc.value.code == "GEOCODE_FAILED"
+    assert "invalid response" in exc.value.message
+
+
+def test_not_found_offers_fuzzy_suggestions(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Suggesting:
+        def __init__(self) -> None:
+            self.suggestion_calls = 0
+
+        def __call__(self, city: str, timeout: int = 10, **kwargs: Any) -> Any:
+            if kwargs.get("exactly_one") is False:
+                self.suggestion_calls += 1
+                return [
+                    SimpleNamespace(latitude=54.6, longitude=87.2, address="Osinniki, Kemerovo, Russia"),
+                    SimpleNamespace(latitude=54.7, longitude=87.1, address="Osinniki District, Russia"),
+                ]
+            return None  # the full query matches nothing
+
+    fake = Suggesting()
+    _isolate(fake, tmp_path, monkeypatch)
+    with pytest.raises(AstroError) as exc:
+        geocoding.geocode("Osinniki, Russia")
+    assert exc.value.code == "GEOCODE_FAILED"
+    assert fake.suggestion_calls == 1
+    assert "Did you mean: Osinniki / Osinniki District" in exc.value.hint
+
+
+def test_error_message_echoes_the_callers_spelling(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(_NotFoundGeocoder(), tmp_path, monkeypatch)
+    with pytest.raises(AstroError) as exc:
+        geocoding.geocode("  Osinniki, Russia ")
+    assert "Osinniki, Russia" in exc.value.message
+    assert "osinniki, russia" not in exc.value.message

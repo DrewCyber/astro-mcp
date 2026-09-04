@@ -44,9 +44,10 @@ def test_planet_sign_field(modern_natal):
         assert 0 <= pdata["deg"] < 360, f"Planet {pcode} deg out of range"
 
 
-def test_aspects_sorted_by_orb(modern_natal):
-    orbs = [a["orb"] for a in modern_natal["aspects"]]
-    assert orbs == sorted(orbs), "Aspects should be sorted by orb (ascending)"
+def test_aspects_sorted_by_significance(modern_natal):
+    """Since 1.2.0 the default order is significance desc (orb asc tiebreak)."""
+    keys = [(-a["sig"], a["orb"]) for a in modern_natal["aspects"]]
+    assert keys == sorted(keys), "Aspects should be ranked by significance"
 
 
 def test_no_duplicate_aspects(modern_natal):

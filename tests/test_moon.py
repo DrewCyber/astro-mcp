@@ -143,17 +143,22 @@ def test_long_windows_drop_lunar_events_by_default() -> None:
     assert "events_note" in result
 
 
-def test_short_windows_keep_lunar_events() -> None:
+def test_short_windows_default_to_phases_and_void_only() -> None:
     result = calculate_transits(
         transit_date="2026-07-26", period_days=MOON_EVENT_MAX_DAYS, **BIRTH
     )
-    assert [e for e in result["aspect_events"] if e["tp"] == "Mo"]
+    moon_events = [e for e in result["aspect_events"] if e["tp"] == "Mo"]
+    assert moon_events, "lunations must still be reported on short windows"
+    # New/Full Moon contacts with the natal Sun only — not every Moon aspect.
+    assert all(
+        e["np"] == "Su" and e["asp"] in ("Cnj", "Opp") for e in moon_events
+    )
     assert "events_note" not in result
 
 
 def test_lunar_events_can_be_forced_on_a_long_window() -> None:
     result = calculate_transits(
-        transit_date="2026-07-26", period_days=90, include_moon_events=True, **BIRTH
+        transit_date="2026-07-26", period_days=90, moon_events="all", **BIRTH
     )
     assert [e for e in result["aspect_events"] if e["tp"] == "Mo"]
     assert "events_note" not in result
@@ -161,7 +166,7 @@ def test_lunar_events_can_be_forced_on_a_long_window() -> None:
 
 def test_lunar_events_can_be_suppressed_on_a_short_window() -> None:
     result = calculate_transits(
-        transit_date="2026-07-26", period_days=3, include_moon_events=False, **BIRTH
+        transit_date="2026-07-26", period_days=3, moon_events="none", **BIRTH
     )
     assert not [e for e in result["aspect_events"] if e["tp"] == "Mo"]
 
@@ -169,10 +174,10 @@ def test_lunar_events_can_be_suppressed_on_a_short_window() -> None:
 def test_dropping_lunar_events_does_not_disturb_the_others() -> None:
     """Filtering must remove Moon rows and change nothing else."""
     with_moon = calculate_transits(
-        transit_date="2026-07-26", period_days=30, include_moon_events=True, **BIRTH
+        transit_date="2026-07-26", period_days=30, moon_events="all", **BIRTH
     )
     without = calculate_transits(
-        transit_date="2026-07-26", period_days=30, include_moon_events=False, **BIRTH
+        transit_date="2026-07-26", period_days=30, moon_events="none", **BIRTH
     )
     expected = [e for e in with_moon["aspect_events"] if e["tp"] != "Mo"]
     assert without["aspect_events"] == expected
@@ -182,7 +187,7 @@ def test_lunar_filtering_makes_a_long_scan_substantially_cheaper() -> None:
     import json
 
     full = calculate_transits(
-        transit_date="2026-07-26", period_days=90, include_moon_events=True, **BIRTH
+        transit_date="2026-07-26", period_days=90, moon_events="all", **BIRTH
     )
     lean = calculate_transits(transit_date="2026-07-26", period_days=90, **BIRTH)
     assert len(json.dumps(lean)) < len(json.dumps(full)) * 0.5

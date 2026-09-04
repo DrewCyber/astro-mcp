@@ -63,7 +63,7 @@ def compute_parts(
     planets: dict[str, ChartPoint],
     angles: dict[str, ChartPoint],
     houses: list[HouseCusp],
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     parts: list[str] | None = None,
     *,
     is_day: bool | None = None,
@@ -111,7 +111,7 @@ def calculate_arabic_parts(
     birth_location: str | dict[str, Any] | None = None,
     parts: list[str] | None = None,
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     include_transits_date: str | None = None,
 ) -> dict[str, Any]:
     """Tool 11: Arabic (Hermetic) Parts / Lots."""

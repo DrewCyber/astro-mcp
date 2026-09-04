@@ -179,9 +179,9 @@ def test_unknown_timezone_is_a_structured_error_not_an_internal_one() -> None:
 
 def test_requested_lunar_omission_is_not_blamed_on_the_window_length() -> None:
     result = calculate_transits(transit_date="2026-07-27", period_days=7,
-                                include_moon_events=False, **NATAL)
+                                moon_events="none", **NATAL)
     note = result["events_note"]
-    assert "include_moon_events" in note
+    assert "moon_events='none'" in note
     assert "14" not in note, "a 7-day window did not trip the threshold"
 
 

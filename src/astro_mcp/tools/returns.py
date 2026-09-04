@@ -21,7 +21,7 @@ from astro_mcp.core.ephemeris_provider import (
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_house, serialize_point
 from astro_mcp.core.geocoding import resolve_location
-from astro_mcp.core.models import ChartPoint, GeoLocation
+from astro_mcp.core.models import ChartPoint, GeoLocation, rank_aspects
 from astro_mcp.tools.natal import compute_natal
 
 
@@ -93,7 +93,9 @@ def calculate_solar_return(
     return_location: str | dict[str, Any] | None = None,
     location: str | dict[str, Any] | None = None,
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
+    min_significance: float | None = None,
+    top_n: int | None = None,
 ) -> dict[str, Any]:
     """Tool 4: Solar return chart for a given year."""
     # Accept 'location' as alias for 'return_location'
@@ -136,8 +138,9 @@ def calculate_solar_return(
                       for k, v in sr_angles.items()},
         "sr_houses": [serialize_house(h, degree_format) for h in sr_houses],
         "sr_to_natal_aspects": [
-            {"sp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb}
-            for a in sr2n
+            {"sp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb,
+             "sig": a.significance}
+            for a in rank_aspects(sr2n, min_significance, top_n)
         ],
     }
     if hs_warning:
@@ -153,7 +156,7 @@ def calculate_lunar_return(
     count: int = 1,
     return_location: str | dict[str, Any] | None = None,
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
 ) -> dict[str, Any]:
     """Tool 6: Lunar return chart(s)."""
     if not (birth_date and birth_time and birth_location):

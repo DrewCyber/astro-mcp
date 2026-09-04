@@ -29,6 +29,10 @@ Raise the coverage floor when coverage grows; never lower it.
   directly (a `Mount` would 307-redirect to `/mcp/`, which claude.ai and plain
   curl do not follow); `/health` stays trivial and cheap for uptime pings.
   The stdio path in `server._run` is untouched by design.
+- Significance ranking (`sig`, `rank_aspects`) and the axis-pair filter are
+  presentation-only: `compute_natal` always returns the full-precision
+  unfiltered aspect set, and internal consumers (rectification, arabic parts)
+  must not depend on the trimmed wire form.
 
 ## Domain conventions that were bugs before — do not regress
 

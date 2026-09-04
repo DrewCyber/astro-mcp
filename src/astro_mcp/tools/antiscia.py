@@ -74,7 +74,7 @@ def calculate_antiscia(
     birth_location: str | dict[str, Any] | None = None,
     orb: float = 1.5,
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     include_contra: bool = True,
     include_transits_date: str | None = None,
 ) -> dict[str, Any]:

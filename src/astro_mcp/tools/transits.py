@@ -16,9 +16,16 @@ from astro_mcp.core.ephemeris_provider import (
     to_jd,
 )
 from astro_mcp.core.errors import AstroError
-from astro_mcp.core.formatters import serialize_point, strip_nulls
+from astro_mcp.core.formatters import build_legend, serialize_point, strip_nulls
 from astro_mcp.core.geocoding import local_to_utc, resolve_location
-from astro_mcp.core.models import ANGLE_KEYS, ASPECT_ANGLES, PLANET_IDS, ChartPoint
+from astro_mcp.core.models import (
+    ANGLE_KEYS,
+    ASPECT_ANGLES,
+    PLANET_IDS,
+    ChartPoint,
+    aspect_significance,
+    rank_aspects,
+)
 from astro_mcp.core.moon import moon_phase, moon_void_of_course, next_lunations
 from astro_mcp.tools.natal import compute_natal
 
@@ -33,8 +40,14 @@ FAST_KEYS = frozenset({"Mo", "Me", "Ve", "Ma", "Su"})
 # Past a couple of weeks the Moon's events are noise: it aspects every natal
 # point roughly once a month, so a 90-day scan produced 708 lunar events out of
 # 948 -- 70% of the payload -- burying the slow contacts that actually carry a
-# forecast.  Beyond this many days lunar events are dropped unless asked for.
+# forecast.  Beyond this many days the default moon_events mode drops lunar
+# contacts entirely unless asked for.
 MOON_EVENT_MAX_DAYS = 14
+
+# In "phases_void" mode only the Moon's own luminaries are events: transiting
+# Moon conjunct the natal Sun is a New Moon, opposition a Full Moon. Phases,
+# next lunations and void-of-course always live in the "moon" block instead.
+LUNATION_ASPECTS = frozenset({"Cnj", "Opp"})
 
 # How far either side of the queried moment to look for the exact hit of an
 # aspect that is currently within orb.  Slow outer-planet aspects can stay in
@@ -146,6 +159,10 @@ def _scan_aspect_events(
                                 "asp": asp_code,
                                 "exact": jd_to_iso(ex_jd)[:10],
                                 "retro": speed < 0,
+                                # Exact at perfection: tightness is maximal by
+                                # definition, so the score reflects bodies and
+                                # aspect type only.
+                                "sig": aspect_significance(tp, np_code, asp_code, 0.0, 1.0),
                             })
                     prev_delta = delta
 
@@ -164,10 +181,13 @@ def calculate_transits(
     orbs: dict[str, float] | None = None,
     fast_planets_only: bool = False,
     include_asteroids: bool = False,
-    include_moon_events: bool | None = None,
+    moon_events: str | None = None,
     house_system: str = "P",
-    degree_format: str = "dms",
+    degree_format: str = "dec",
     max_orb: float | None = 3.0,
+    min_significance: float | None = None,
+    top_n: int | None = None,
+    include_legend: bool = False,
 ) -> dict[str, Any]:
     """
     Calculate transit planets and their aspects to natal chart.
@@ -177,16 +197,18 @@ def calculate_transits(
         noon local time.  Provide together with transit_location so the
         correct timezone is used for the conversion to UTC.
     transit_location: Used only to resolve the timezone that ``transit_time``
-        is expressed in.  Houses are always the natal ones, so relocating does
+        is expressed in. Houses are always the natal ones, so relocating does
         not move the transiting planets between houses.
     period_days: When greater than 1, an ``aspect_events`` list is returned
         covering every transit-to-natal aspect that perfects within
         ``[transit_date, transit_date + period_days]``.
     include_asteroids: Add Ceres, Pallas, Juno and Vesta to both the reported
         positions and the event scan.
-    include_moon_events: Whether ``aspect_events`` includes lunar contacts.
-        Defaults to true for windows up to ``MOON_EVENT_MAX_DAYS`` days and
-        false beyond that, where they would swamp the slower contacts.
+    moon_events: Lunar contacts in ``aspect_events``: 'all', 'phases_void'
+        (only New/Full Moon contacts with the natal Sun) or 'none'. Defaults
+        to 'phases_void' for windows up to ``MOON_EVENT_MAX_DAYS`` days and
+        'none' beyond, where full lunar output would swamp the slower
+        contacts.
     """
     if not transit_date:
         raise AstroError("INPUT_ERROR", "transit_date is required.")
@@ -232,10 +254,11 @@ def calculate_transits(
         angle_orb_keys=set(ANGLE_KEYS),
     )
 
+    # max_orb is a relevance cut, so it runs before the significance ranking:
+    # otherwise top_n could keep an out-of-orb aspect over an in-orb one.
+    in_orb = [a for a in raw_aspects if max_orb is None or a.orb <= max_orb]
     aspects_out: list[dict[str, Any]] = []
-    for asp in raw_aspects:
-        if max_orb is not None and asp.orb > max_orb:
-            continue
+    for asp in rank_aspects(in_orb, min_significance=min_significance, top_n=top_n):
         exact = None
         if asp.point1 in PLANET_IDS and asp.point2 in natal_points:
             exact = _find_exact_near(
@@ -250,9 +273,9 @@ def calculate_transits(
             "asp": asp.aspect_type,
             "orb": asp.orb,
             "apply": asp.applying,
+            "sig": asp.significance,
             "exact": exact,
         }))
-    aspects_out.sort(key=lambda a: a["orb"])
 
     result: dict[str, Any] = {
         "date": transit_date,
@@ -269,6 +292,9 @@ def calculate_transits(
         "aspects": aspects_out,
     }
 
+    if include_legend:
+        result["legend"] = build_legend()
+
     if period_days > 1:
         # Only bodies whose positions are reported may produce events, so the
         # two halves of the result can never disagree about what was scanned.
@@ -276,28 +302,39 @@ def calculate_transits(
         # same contacts with the aspect mirrored, and listing both doubles the
         # nodal rows for no extra information.
         event_keys = [k for k in transit_planets if k in PLANET_IDS and k != "SN"]
-        show_moon = (
-            period_days <= MOON_EVENT_MAX_DAYS
-            if include_moon_events is None
-            else include_moon_events
+        mode = (
+            moon_events
+            if moon_events is not None
+            else ("phases_void" if period_days <= MOON_EVENT_MAX_DAYS else "none")
         )
-        if not show_moon:
+        if mode == "none":
             event_keys = [k for k in event_keys if k != "Mo"]
             # State the reason that actually applied: claiming the window was
             # too long when the caller asked for the omission invites the
             # reader to infer an automatic threshold that did not fire.
             result["events_note"] = (
-                "Lunar events omitted at your request (include_moon_events=false)."
-                if include_moon_events is not None
+                "Lunar events omitted at your request (moon_events='none')."
+                if moon_events is not None
                 else (
                     f"Lunar events omitted: beyond {MOON_EVENT_MAX_DAYS} days the Moon "
                     "contacts every natal point and would dominate the list. Pass "
-                    "include_moon_events=true, or query a shorter period, to see them."
+                    "moon_events='all' (or 'phases_void'), or query a shorter period, "
+                    "to see them."
                 )
-            )        # Events are reported for whole calendar days (UTC) starting on
+            )
+        # Events are reported for whole calendar days (UTC) starting on
         # transit_date, not for a window hanging off the transit moment.
-        result["aspect_events"] = _scan_aspect_events(
+        events = _scan_aspect_events(
             natal_points, to_jd(f"{transit_date}T00:00:00Z"), period_days, event_keys
         )
+        if mode == "phases_void":
+            events = [
+                e for e in events
+                if e["tp"] != "Mo"
+                or (e["np"] == "Su" and e["asp"] in LUNATION_ASPECTS)
+            ]
+        if min_significance is not None:
+            events = [e for e in events if e["sig"] >= min_significance]
+        result["aspect_events"] = events
 
     return result
