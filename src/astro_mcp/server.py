@@ -10,10 +10,20 @@ from collections.abc import Callable
 from typing import Any
 
 from mcp.server import Server
+from mcp.server.context import ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ContentBlock,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 from pydantic import ValidationError
 
+from astro_mcp import __version__
 from astro_mcp.config import settings
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import to_compact_json
@@ -27,11 +37,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _ok(data: Any) -> list[TextContent]:
+def _ok(data: Any) -> list[ContentBlock]:
     return [TextContent(type="text", text=to_compact_json(data))]
 
 
-def _err(code: str, message: str, hint: str = "") -> list[TextContent]:
+def _err(code: str, message: str, hint: str = "") -> list[ContentBlock]:
     payload: dict[str, Any] = {"error": True, "code": code, "message": message}
     if hint:
         payload["hint"] = hint
@@ -46,7 +56,6 @@ def _load_tool(name: str) -> Callable[..., Any] | None:
     module_path, func_name = entry
     module = importlib.import_module(module_path)
     return getattr(module, func_name)  # type: ignore[no-any-return]
-
 
 #: Pydantic tags each union branch it tried with the branch's type name. Those
 #: tags are noise to the caller, who only cares about the field path.
@@ -101,92 +110,118 @@ _TOOL_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 
-def create_server() -> Server:
-    server = Server("astro-mcp")
-
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        # Descriptions and schemas are both derived from the Pydantic models in
-        # schemas.py, so they cannot drift from what the tools accept.
-        return [
+async def _list_tools(
+    _ctx: ServerRequestContext[Any, Any],
+    _params: PaginatedRequestParams | None,
+) -> ListToolsResult:
+    # Descriptions and schemas are both derived from the Pydantic models in
+    # schemas.py, so they cannot drift from what the tools accept.
+    return ListToolsResult(
+        tools=[
             Tool(
                 name=name,
                 description=tool_description(model),
-                inputSchema=json_schema_for(model),
+                input_schema=json_schema_for(model),
             )
             for name, model in TOOL_INPUTS.items()
         ]
+    )
 
-    # validate_input=False: the SDK would otherwise validate against the same
-    # schema a second time and report failures as prose, breaking the
-    # structured-JSON error contract every other failure path honours. The
-    # models below are the source of that schema, so nothing is lost.
-    @server.call_tool(validate_input=False)
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        model = TOOL_INPUTS.get(name)
-        if model is None or name not in _TOOL_REGISTRY:
-            return _err(
+
+async def _call_tool(
+    _ctx: ServerRequestContext[Any, Any],
+    params: CallToolRequestParams,
+) -> CallToolResult:
+    name = params.name
+    # The SDK validates only the JSON-RPC envelope (name/arguments shape),
+    # never the tool schema itself; the models below are that validation and
+    # report failures as structured JSON, honouring the error contract every
+    # other failure path follows.
+    arguments: dict[str, Any] = params.arguments or {}
+    model = TOOL_INPUTS.get(name)
+
+    if model is None or name not in _TOOL_REGISTRY:
+        return CallToolResult(
+            content=_err(
                 "UNKNOWN_TOOL",
                 f"Tool '{name}' not found.",
                 hint=f"Available tools: {', '.join(sorted(_TOOL_REGISTRY))}",
             )
+        )
 
-        try:
-            # Lazy import: a broken tool module must still yield the
-            # structured error contract, not escape into transport prose.
-            func = _load_tool(name)
-        except Exception:
-            logger.exception("Failed to load tool %s", name)
-            return _err(
+    try:
+        # Lazy import: a broken tool module must still yield the
+        # structured error contract, not escape into transport prose.
+        func = _load_tool(name)
+    except Exception:
+        logger.exception("Failed to load tool %s", name)
+        return CallToolResult(
+            content=_err(
                 "INTERNAL_ERROR",
                 f"Tool '{name}' is unavailable.",
                 hint="Check the server logs for details.",
             )
-        if func is None:  # pragma: no cover - registry membership checked above
-            return _err(
+        )
+    if func is None:  # pragma: no cover - registry membership checked above
+        return CallToolResult(
+            content=_err(
                 "UNKNOWN_TOOL",
                 f"Tool '{name}' not found.",
                 hint=f"Available tools: {', '.join(sorted(_TOOL_REGISTRY))}",
             )
+        )
 
-        try:
-            parsed = model.model_validate(arguments)
-        except ValidationError as exc:
-            logger.warning("Bad arguments for tool %s: %s", name, exc)
-            return _err(
+    try:
+        parsed = model.model_validate(arguments)
+    except ValidationError as exc:
+        logger.warning("Bad arguments for tool %s: %s", name, exc)
+        return CallToolResult(
+            content=_err(
                 "INPUT_ERROR",
                 f"Invalid arguments for '{name}'.",
                 hint=_format_validation_error(exc),
             )
+        )
 
-        # exclude_unset keeps the tool functions authoritative for their own
-        # defaults; the schema only advertises them.
-        kwargs = parsed.model_dump(exclude_unset=True)
+    # exclude_unset keeps the tool functions authoritative for their own
+    # defaults; the schema only advertises them.
+    kwargs = parsed.model_dump(exclude_unset=True)
 
-        try:
-            # Every tool is CPU-bound Swiss Ephemeris work plus (for geocoding)
-            # a blocking network call. Running it inline would stall the whole
-            # asyncio event loop and freeze the stdio transport.
-            result = await asyncio.to_thread(func, **kwargs)
-            return _ok(result)
+    try:
+        # Every tool is CPU-bound Swiss Ephemeris work plus (for geocoding)
+        # a blocking network call. Running it inline would stall the whole
+        # asyncio event loop and freeze the transport.
+        result = await asyncio.to_thread(func, **kwargs)
+        return CallToolResult(content=_ok(result))
 
-        except AstroError as exc:
-            logger.warning("%s in tool %s: %s", exc.code, name, exc)
-            return [TextContent(type="text", text=to_compact_json(exc.to_payload()))]
-        except ValueError as exc:
-            logger.warning("ValueError in tool %s: %s", name, exc)
-            return _err("INPUT_ERROR", str(exc))
-        except Exception:
-            # Log the full traceback server-side, but never echo internal
-            # details (paths, library internals) back to the model.
-            logger.exception("Unexpected error in tool %s", name)
-            return _err(
+    except AstroError as exc:
+        logger.warning("%s in tool %s: %s", exc.code, name, exc)
+        return CallToolResult(
+            content=[TextContent(type="text", text=to_compact_json(exc.to_payload()))]
+        )
+    except ValueError as exc:
+        logger.warning("ValueError in tool %s: %s", name, exc)
+        return CallToolResult(content=_err("INPUT_ERROR", str(exc)))
+    except Exception:
+        # Log the full traceback server-side, but never echo internal
+        # details (paths, library internals) back to the model.
+        logger.exception("Unexpected error in tool %s", name)
+        return CallToolResult(
+            content=_err(
                 "INTERNAL_ERROR",
                 "An internal error occurred while computing this chart.",
                 hint="Check the server logs for details.",
             )
+        )
 
-    return server
+
+def create_server() -> Server:
+    return Server(
+        "astro-mcp",
+        version=__version__,
+        on_list_tools=_list_tools,
+        on_call_tool=_call_tool,
+    )
 
 
 async def _run() -> None:

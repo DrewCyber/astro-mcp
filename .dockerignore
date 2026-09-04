@@ -1,0 +1,32 @@
+# Never bake into the image: local secrets (.env), personal dirs, and
+# anything irrelevant to the runtime.
+.git
+.gitignore
+.github
+.dockerignore
+Dockerfile
+docker-compose*.yml
+render.yaml
+.env
+.env.*
+.venv
+.coverage
+*.egg-info
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+docs
+tmp
+private
+context
+.kilo
+.vscode
+kilo.json
+PRD.md
+CHANGELOG.md
+AGENTS.md
+DEPLOY.md
+uv.lock

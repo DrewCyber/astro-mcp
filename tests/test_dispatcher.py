@@ -19,17 +19,17 @@ from astro_mcp.server import create_server
 @pytest.fixture(scope="module")
 def call_handler():
     server = create_server()
-    return server.request_handlers[types.CallToolRequest]
+    entry = server.get_request_handler("tools/call")
+    assert entry is not None
+    return entry.handler
 
 
 async def _call(call_handler, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    request = types.CallToolRequest(
-        method="tools/call",
-        params=types.CallToolRequestParams(name=name, arguments=arguments),
+    result = await call_handler(
+        None,  # ServerRequestContext — the dispatcher never reads it
+        types.CallToolRequestParams(name=name, arguments=arguments),
     )
-    result = await call_handler(request)
-    call_result = result.root if hasattr(result, "root") else result
-    content = call_result.content[0]
+    content = result.content[0]
     assert isinstance(content, types.TextContent)
     return json.loads(content.text)
 

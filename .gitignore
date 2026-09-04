@@ -45,3 +45,6 @@ htmlcov/
 private/
 # Scratch space (may contain personal birth data)
 tmp/
+# AI-assistant session state
+.zcode/
+.kilo/

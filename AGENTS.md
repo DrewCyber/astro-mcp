@@ -23,6 +23,12 @@ Raise the coverage floor when coverage grows; never lower it.
 - Errors: raise `AstroError(code, message, hint=...)` with codes from the
   closed set in `core/errors.py`. Only `server.py` formats error payloads;
   `INTERNAL_ERROR` must not leak internals.
+- HTTP transport (`http_server.py`) wraps the same low-level `Server`
+  statelessly — one fresh transport per request, no session affinity, so it
+  works behind Render/Koyeb/Cloud Run proxies. `POST /mcp` must be answered
+  directly (a `Mount` would 307-redirect to `/mcp/`, which claude.ai and plain
+  curl do not follow); `/health` stays trivial and cheap for uptime pings.
+  The stdio path in `server._run` is untouched by design.
 
 ## Domain conventions that were bugs before — do not regress
 

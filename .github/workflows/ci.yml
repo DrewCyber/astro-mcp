@@ -54,3 +54,27 @@ jobs:
       - name: Test
         # Coverage floor lives in pyproject addopts (--cov-fail-under=83).
         run: pytest -q
+
+  # The remote-MCP image is what one-click deploys (Render, Cloud Run, Koyeb)
+  # build from; catch a broken Dockerfile before it ships.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t astro-mcp:ci .
+
+      - name: Smoke-test HTTP transport
+        run: |
+          docker run -d --name smoke -p 8080:8080 astro-mcp:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8080/health && break
+            sleep 2
+          done
+          curl -fsS -X POST http://localhost:8080/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+            | grep -o '"calculate_natal_chart"'
+          docker rm -f smoke

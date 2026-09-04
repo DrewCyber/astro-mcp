@@ -12,6 +12,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """All configurable parameters for astro-mcp."""
 
+    transport: Literal["stdio", "http"] = Field(default="stdio", alias="ASTRO_MCP_TRANSPORT")
+    host: str = Field(default="127.0.0.1", alias="HOST")
+    port: int = Field(default=8080, ge=1, le=65535, alias="PORT")
     ephe_path: str = Field(default="./ephe", alias="EPHE_PATH")
     geocoding_provider: str = Field(default="nominatim", alias="GEOCODING_PROVIDER")
     opencage_api_key: str = Field(default="", alias="OPENCAGE_API_KEY")

@@ -17,7 +17,7 @@ FILES=(
     "seas_18.se1"   # Asteroids  1800–2400
     "sepl_18.se1"   # Planets    1800–2400
     "semo_18.se1"   # Moon       1800–2400
-    "fixstars.cat"  # Fixed stars catalogue
+    "sefstars.txt"  # Fixed stars catalogue
 )
 
 # Optional extended-range files (uncomment if you need dates outside 1800–2400):

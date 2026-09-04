@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -61,6 +62,22 @@ _CALC_FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
 # additionally *validates* it; the server calls it explicitly at startup.
 swe.set_ephe_path(settings.ephe_path)
 
+_tls = threading.local()
+
+
+def _ensure_ephe_path() -> None:
+    """Apply the ephemeris path in the *calling* thread, once per thread.
+
+    Depending on how pyswisseph was built, the ephemeris path and file cache
+    are thread-local: a path set at import time in the main thread then does
+    not reach ``asyncio.to_thread`` workers, whose ``swe.calc_ut`` silently
+    falls back to the Moshier ephemeris.  Re-applying per thread is idempotent
+    and cheap (skipped after the first call in each thread).
+    """
+    if not getattr(_tls, "ephe_applied", False):
+        swe.set_ephe_path(settings.ephe_path)
+        _tls.ephe_applied = True
+
 
 def pid_for(key: str) -> int:
     """Swiss Ephemeris id for a chart key, honouring the mean/true node setting.
@@ -98,6 +115,7 @@ def init_ephemeris(ephe_path: str | None = None) -> None:
         )
 
     swe.set_ephe_path(path)
+    _tls.ephe_applied = True
     global _COVERED_YEARS
     _COVERED_YEARS = _detect_covered_years(path)
     logger.info("Swiss Ephemeris initialised from %s", path)
@@ -229,6 +247,7 @@ def calc_planet(jd: float, planet_id: int) -> tuple[float, float]:
         node_id = PLANET_IDS["NN_m"] if settings.use_mean_node else PLANET_IDS["NN"]
         lon, speed = calc_planet(jd, node_id)
         return (lon + 180.0) % 360.0, speed
+    _ensure_ephe_path()
     try:
         result, retflag = swe.calc_ut(jd, planet_id, _CALC_FLAGS)
     except swe.Error as exc:
@@ -528,6 +547,7 @@ def calc_rise_set(jd: float, lat: float, lon: float) -> tuple[float, float]:
     swisseph signals it with a ``-2`` return flag alongside an all-zero result
     array.  Ignoring the flag yields planetary hours derived from JD 0.
     """
+    _ensure_ephe_path()
     rise_flag, rise_result = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, (lon, lat, 0))
     set_flag, set_result = swe.rise_trans(jd, swe.SUN, swe.CALC_SET, (lon, lat, 0))
     if rise_flag < 0 or set_flag < 0:

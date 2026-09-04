@@ -1,0 +1,9 @@
+# Render blueprint: one-click free deployment of the remote MCP server.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: astro-mcp
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true

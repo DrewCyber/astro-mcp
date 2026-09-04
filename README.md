@@ -4,6 +4,10 @@
 
 Implements 14 tools backed by Swiss Ephemeris (`pyswisseph`) and integrates with any [Model Context Protocol](https://modelcontextprotocol.io) client (Claude Desktop, etc.).
 
+Runs locally over stdio **or** remotely over streamable HTTP — including as a claude.ai custom connector on the free plan:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/DrewCyber/astro-mcp)
+
 ## Tools
 
 | # | Name | Description |
@@ -68,10 +72,29 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
+## Remote hosting (claude.ai and other web clients)
+
+Free claude.ai accounts can connect one custom connector — a remote MCP server
+at a public HTTPS URL. Set `ASTRO_MCP_TRANSPORT=http` and the server exposes
+the same tools over stateless streamable HTTP at `/mcp` (plus `/health` for
+uptime pings):
+
+```bash
+export ASTRO_MCP_TRANSPORT=http
+python -m astro_mcp    # serves http://127.0.0.1:8080/mcp
+```
+
+The fastest path is the **Deploy to Render** button above (free, no credit
+card). For a public shared instance, quick `cloudflared` tunnels, Google Cloud
+Run, Koyeb and troubleshooting, see **[DEPLOY.md](DEPLOY.md)**.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
+| `ASTRO_MCP_TRANSPORT` | `stdio` | `stdio` for local clients, `http` for remote streamable-HTTP (`/mcp`) |
+| `HOST` | `127.0.0.1` | Bind address for the HTTP transport (containers want `0.0.0.0`) |
+| `PORT` | `8080` | Port for the HTTP transport |
 | `EPHE_PATH` | `./ephe` | Path to Swiss Ephemeris `.se1` data files |
 | `GEOCODING_PROVIDER` | `nominatim` | `nominatim` or `opencage` |
 | `OPENCAGE_API_KEY` | — | Required if `GEOCODING_PROVIDER=opencage` |
