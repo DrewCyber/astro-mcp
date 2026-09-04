@@ -1,9 +1,15 @@
 # Render blueprint: one-click free deployment of the remote MCP server.
+# Pulls the prebuilt image from GitHub Container Registry (published by the
+# CI docker job on every v* tag) instead of building from source — a deploy
+# takes ~1 minute and spends no build CPU.
+# Release flow: push a v* tag, then bump the tag below in the same change.
 # Docs: https://render.com/docs/blueprint-spec
 services:
   - type: web
     name: astro-mcp
-    runtime: docker
+    runtime: image
+    image:
+      url: ghcr.io/drewcyber/astro-mcp:1.2.0
     plan: free
     healthCheckPath: /health
     autoDeploy: true

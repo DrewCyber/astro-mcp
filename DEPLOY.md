@@ -51,12 +51,19 @@ Render Free: Docker-сервис, 750 часов/месяц (хватает на
 
 1. Нажми кнопку **Deploy to Render** выше.
 2. Войди через GitHub (или создай аккаунт — бесплатный, без карты).
-3. Подтверди имя сервиса (`astro-mcp`) → **Apply**. Render сам соберёт образ
-   из `Dockerfile` и `render.yaml` (~3–5 минут).
+3. Подтверди имя сервиса (`astro-mcp`) → **Apply**. Render не собирает ничего
+   сам — он сразу тянет готовый образ из GitHub Container Registry, поэтому
+   деплой занимает около минуты.
 4. После деплоя скопируй адрес сервиса, например
    `https://astro-mcp-abc123.onrender.com`.
 5. Подключи в claude.ai URL **`https://astro-mcp-abc123.onrender.com/mcp`**
    (шаги как в варианте A).
+
+Образ пинкован к конкретной версии (см. `render.yaml`) и проходит
+контейнерный smoke-тест в CI перед публикацией. Обновление: в репозитории
+бампается тег образа в `render.yaml` — Render подхватит при следующем sync
+blueprint. Хочешь собирать из своего форка — см. раздел
+«Любой другой Docker-хост».
 
 ### Как не давать инстансу засыпать
 
@@ -179,7 +186,8 @@ ephemeris data baked in.
    *No authentication*; the URL must end with `/mcp`).
 2. **Your own free instance (recommended)** — click the
    [**Deploy to Render**](https://render.com/deploy?repo=https://github.com/DrewCyber/astro-mcp)
-   button, sign in with GitHub (no credit card), and connect
+   button, sign in with GitHub (no credit card): Render pulls the prebuilt
+   GHCR image (no build, ~1 minute) — connect
    `https://<your-service>.onrender.com/mcp`. Free tier: 750 h/month, sleeps
    after 15 min idle (keep awake with a free UptimeRobot ping to `/health`).
 3. **Quick test** — run locally (`ASTRO_MCP_TRANSPORT=http python -m astro_mcp`)
