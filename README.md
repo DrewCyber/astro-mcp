@@ -85,8 +85,11 @@ python -m astro_mcp    # serves http://127.0.0.1:8080/mcp
 ```
 
 The fastest path is the **Deploy to Render** button above (free, no credit
-card). For a public shared instance, quick `cloudflared` tunnels, Google Cloud
-Run, Koyeb and troubleshooting, see **[DEPLOY.md](DEPLOY.md)**.
+card). A prebuilt image is also published to GHCR on every release —
+`docker run -d -p 8080:8080 ghcr.io/drewcyber/astro-mcp:latest` serves
+`http://localhost:8080/mcp` with zero build steps. For a public shared
+instance, quick `cloudflared` tunnels, Google Cloud Run, Koyeb and
+troubleshooting, see **[DEPLOY.md](DEPLOY.md)**.
 
 ## Environment Variables
 

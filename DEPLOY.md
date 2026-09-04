@@ -122,6 +122,17 @@ Cloud Run сам использует `Dockerfile` и передаёт `PORT`/`H
 
 ## Любой другой Docker-хост
 
+Готовый образ опубликован в GitHub Container Registry — ничего собирать не нужно:
+
+```bash
+docker run -d -p 8080:8080 ghcr.io/drewcyber/astro-mcp:latest   # → http://<хост>:8080/mcp
+```
+
+Доступны теги: `latest`, `1.1` (мажор.минор), `1.1.0` (точная версия). На
+Apple Silicon образ (linux/amd64) запускается через Rosetta/QEMU «как есть».
+
+Если хочется собрать самостоятельно:
+
 ```bash
 docker build -t astro-mcp .                       # на Apple Silicon: добавь --platform linux/amd64
 docker run -d -p 8080:8080 astro-mcp              # → http://<хост>:8080/mcp
@@ -174,7 +185,10 @@ ephemeris data baked in.
 3. **Quick test** — run locally (`ASTRO_MCP_TRANSPORT=http python -m astro_mcp`)
    and expose it with `cloudflared tunnel --url http://localhost:8080`; connect
    the printed `https://…trycloudflare.com/mcp` URL.
-4. **Advanced** — the same Dockerfile deploys to Google Cloud Run
+4. **Advanced** — run the published image anywhere Docker runs:
+   `docker run -d -p 8080:8080 ghcr.io/drewcyber/astro-mcp:latest`
+   (connect `http://<host>:8080/mcp`; tags: `latest`, `1.1`, `1.1.0`).
+   The same Dockerfile also deploys to Google Cloud Run
    (`gcloud run deploy astro-mcp --source . --allow-unauthenticated`) or Koyeb.
 
 Limits: calculations cover 1800–2400; geocoding is rate-limited to 1 req/s

@@ -32,9 +32,11 @@ custom connector instead of only as a local stdio process. See `DEPLOY.md`.
   need no C toolchain) with ephemeris data baked in.
 - `render.yaml` blueprint and a one-click **Deploy to Render** button
   (free tier, no credit card) for personal remote instances.
-- CI `docker-build` job that builds the image and smoke-tests `/health`
-  and `/mcp`; triggered only by version tags (`v*`), while the test matrix
-  runs on every push and pull request.
+- CI `docker-build` job that builds the image, smoke-tests `/health` and
+  `/mcp`, and publishes it to GitHub Container Registry
+  (`ghcr.io/drewcyber/astro-mcp`, tags `X.Y.Z` / `X.Y` / `latest`); triggered
+  only by version tags (`v*`), while the test matrix runs on every push and
+  pull request.
 - `DEPLOY.md`: free hosting guide (RU/EN) — shared instance, Render,
   `cloudflared` tunnel, Cloud Run, Koyeb, keepalive and troubleshooting.
 - Explicit `starlette`/`uvicorn` dependencies (imported directly) and
