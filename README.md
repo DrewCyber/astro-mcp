@@ -8,6 +8,10 @@ Runs locally over stdio **or** remotely over streamable HTTP — including as a 
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/DrewCyber/astro-mcp)
 
+**New to claude.ai connectors?** A step-by-step guide in Russian — connecting the
+free shared instance or deploying your own with one button, project setup and
+example prompts — lives at **[drewcyber.github.io/astro-mcp](https://drewcyber.github.io/astro-mcp/)**.
+
 ## Tools
 
 | # | Name | Description |

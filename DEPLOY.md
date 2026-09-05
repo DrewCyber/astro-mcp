@@ -27,9 +27,7 @@
 
 Подключись к уже развёрнутому публичному инстансу:
 
-> **URL коннектора:** `https://astro-mcp.onrender.com/mcp`
-> *(плейсхолдер — автор публикует здесь URL своего общего инстанса после
-> первого деплоя)*
+> **URL коннектора:** `https://astro-mcp-2t5g.onrender.com/mcp`
 
 1. Открой claude.ai → **Settings → Connectors → Add custom connector**
    (или в чате: *Customize → Connectors → «+»*).

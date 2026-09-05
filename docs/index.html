@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Персональный астролог с реальными расчётами — бесплатно</title>
+  <meta name="description" content="Подключите персонального астролога к Claude: настоящие расчёты по вашей дате, времени и месту рождения — натальная карта, транзиты, прогнозы. Бесплатно, без привязки карты, без установки.">
+  <meta property="og:title" content="Персональный астролог с реальными расчётами — бесплатно">
+  <meta property="og:description" content="Швейцарские эфемериды + Claude: натальная карта, транзиты, синастрия, тайминг событий. Настройка за 5 минут на бесплатных аккаунтах.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%8C%99%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body id="top">
+
+  <div class="sky" aria-hidden="true">
+    <div class="sky-stars"></div>
+    <div class="sky-stars sky-stars--far"></div>
+    <div class="sky-nebula"></div>
+  </div>
+
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#top"><span class="brand-moon" aria-hidden="true">🌙</span> astro-mcp</a>
+      <nav class="nav-links">
+        <a href="#step-1">Подключение</a>
+        <a href="#step-2">Проект</a>
+        <a href="#step-3">Примеры</a>
+        <a href="#tools">Инструменты</a>
+        <a class="nav-cta" href="https://github.com/DrewCyber/astro-mcp" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <svg class="hero-art" viewBox="0 0 220 220" aria-hidden="true">
+          <defs>
+            <radialGradient id="moonGrad" cx="38%" cy="34%" r="80%">
+              <stop offset="0%" stop-color="#fdf6d8"/>
+              <stop offset="55%" stop-color="#f2c94c"/>
+              <stop offset="100%" stop-color="#c9971f"/>
+            </radialGradient>
+            <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#f2c94c" stop-opacity="0.35"/>
+              <stop offset="100%" stop-color="#f2c94c" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <circle cx="110" cy="110" r="95" fill="url(#glowGrad)"/>
+          <g transform="rotate(-24 110 110)">
+            <ellipse cx="110" cy="110" rx="96" ry="38" fill="none" stroke="#8b9cf5" stroke-opacity="0.35" stroke-width="1"/>
+            <g>
+              <animateTransform attributeName="transform" type="rotate" from="0 110 110" to="360 110 110" dur="26s" repeatCount="indefinite"/>
+              <circle cx="206" cy="110" r="5" fill="#a78bfa"/>
+            </g>
+          </g>
+          <circle cx="110" cy="110" r="46" fill="url(#moonGrad)"/>
+          <circle cx="94" cy="96" r="7" fill="#00000022"/>
+          <circle cx="122" cy="118" r="5" fill="#00000018"/>
+          <circle cx="108" cy="132" r="3.5" fill="#00000015"/>
+          <circle cx="106" cy="14" r="1.6" fill="#e8eaf6"/>
+          <circle cx="24" cy="60" r="1.3" fill="#e8eaf6"/>
+          <circle cx="196" cy="180" r="1.5" fill="#e8eaf6"/>
+          <circle cx="30" cy="170" r="1.2" fill="#e8eaf6"/>
+        </svg>
+        <h1>Персональный астролог<br><em>с реальными расчётами</em>&nbsp;— бесплатно</h1>
+        <p class="lead">
+          Это не «гадание по знакам». Claude рассчитывает вашу карту через MCP-сервер
+          с швейцарскими эфемеридами — по вашей <strong>дате, времени и месту рождения</strong>:
+          точные позиции планет, дома, аспекты, транзиты, синастрия.
+        </p>
+        <ul class="chips">
+          <li>✦ Бесплатно</li>
+          <li>✦ Без привязки карты</li>
+          <li>✦ Без установки</li>
+          <li>✦ Открытый код</li>
+        </ul>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#step-1">Настроить за 5 минут</a>
+          <a class="btn btn-ghost" href="#step-3">Примеры запросов</a>
+        </div>
+        <p class="hero-note">Работает на бесплатных аккаунтах Claude и Render. Регистрация — через GitHub, банковская карта не нужна.</p>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section class="section">
+      <div class="container">
+        <h2>Как это работает</h2>
+        <ol class="steps-3">
+          <li>
+            <span class="step-num">1</span>
+            <h3>Подключите коннектор</h3>
+            <p>Одну ссылку в настройках Claude — общий бесплатный сервер или свой, развёрнутый одной кнопкой.</p>
+            <span class="step-time">~1 минута</span>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <h3>Создайте проект</h3>
+            <p>Текстовый файл с датой, временем и местом рождения — и готовая инструкция для Claude.</p>
+            <span class="step-time">~2 минуты</span>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <h3>Спрашивайте</h3>
+            <p>Натальная карта, прогнозы, отношения, тайминг событий — всё считается, а не выдумывается.</p>
+            <span class="step-time">∞</span>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ============ STEP 1 ============ -->
+    <section class="section section-step" id="step-1">
+      <div class="container">
+        <p class="kicker">Шаг 1</p>
+        <h2>Подключаем MCP-коннектор в Claude</h2>
+        <p class="section-lead">Бесплатный Claude подключает один сторонний MCP-сервер — <em>custom connector</em>. Выберите свой вариант:</p>
+
+        <div class="variant">
+          <h3><span class="variant-tag">Вариант А</span> Общий инстанс — ноль усилий</h3>
+          <p>Сервер уже развёрнут и публичен. Скопируйте адрес:</p>
+          <div class="copy-wrap">
+            <pre><code>https://astro-mcp-2t5g.onrender.com/mcp</code></pre>
+            <button type="button" class="copy-btn">Скопировать</button>
+          </div>
+          <p class="note">⚠ Инстанс общий и бесплатный: после «сна» первый запрос может подождать ~50 секунд. Если для вас важна приватность — разверните свой (вариант Б): через общий сервер проходят параметры запросов (города, даты).</p>
+
+          <div class="variant">
+            <h3><span class="variant-tag">Вариант Б</span> Свой инстанс одной кнопкой — ~5 минут, без карты</h3>
+            <p class="deploy-line">
+              <a href="https://render.com/deploy?repo=https://github.com/DrewCyber/astro-mcp" target="_blank" rel="noopener">
+                <img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" width="196" height="46">
+              </a>
+            </p>
+            <ol class="num-list">
+              <li>Нажмите кнопку <strong>Deploy to Render</strong>.</li>
+              <li>Войдите через GitHub — аккаунт бесплатный, <strong>банковская карта не нужна</strong>.</li>
+              <li>Подтвердите имя сервиса (<code>astro-mcp</code>) и нажмите <strong>Apply</strong>. Render ничего не собирает — сразу тянет готовый образ, деплой занимает около минуты.</li>
+              <li>После деплоя скопируйте адрес своего сервиса, например <code>https://astro-mcp-abc123.onrender.com</code>, и добавьте к нему <code>/mcp</code>.</li>
+              <li>Подключите свой URL по инструкции ниже.</li>
+            </ol>
+            <p class="note">💡 Бесплатный план Render: 750 часов в месяц (хватает на 24/7). Инстанс засыпает после 15 минут тишины и просыпается ~50 секунд. Чтобы не засыпал — бесплатный <a href="https://uptimerobot.com" target="_blank" rel="noopener">UptimeRobot</a> пингует <code>/health</code> каждые 10 минут.</p>
+          </div>
+        </div>
+
+        <div class="sub-block">
+          <h3>Подключение в claude.ai</h3>
+          <ol class="num-list">
+            <li>Откройте claude.ai → <strong>Settings → Connectors → Add custom connector</strong> (или прямо в чате: <strong>Customize → Connectors → «+»</strong>).</li>
+            <li>Вставьте URL коннектора — он <strong>обязательно заканчивается на <code>/mcp</code></strong>.</li>
+            <li>Authentication: <strong>No authentication</strong> → <strong>Create / Connect</strong>.</li>
+            <li>Готово — в новом чате доступны все 14 инструментов расчёта.</li>
+          </ol>
+        </div>
+
+        <div class="sub-block sub-block--table">
+          <h3>Если что-то не работает</h3>
+          <table class="table">
+            <thead>
+              <tr><th>Симптом</th><th>Решение</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>«Authorization with the MCP server failed»</td>
+                <td>URL не заканчивается на <code>/mcp</code>, или выбран не <em>No authentication</em>, или сервер спит: откройте <code>https://&lt;адрес&gt;/health</code> в браузере и дождитесь <code>{"status":"ok"}</code>.</td>
+              </tr>
+              <tr>
+                <td>Первый вызов инструмента висит</td>
+                <td>Бесплатный инстанс просыпается ~50 секунд: откройте <code>/health</code>, дождитесь ответа, повторите запрос.</td>
+              </tr>
+              <tr>
+                <td>Инструменты не видны в чате</td>
+                <td>Коннектор добавлен, но выключен: <em>Customize → Connectors</em> → включите переключатель <code>astro-mcp</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STEP 2 ============ -->
+    <section class="section section-step" id="step-2">
+      <div class="container">
+        <p class="kicker">Шаг 2</p>
+        <h2>Создаём проект с вашими данными</h2>
+        <p class="section-lead">Чтобы Claude не спрашивал данные при каждом запросе, создайте проект и один раз добавьте свою информацию.</p>
+
+        <ol class="num-list num-list--spaced">
+          <li>На claude.ai откройте <strong>Projects → New project</strong>, назовите, например, «Мой астролог».</li>
+          <li>
+            В блоке <strong>Project knowledge</strong> (контекст) нажмите <strong>Add content → New text</strong>
+            и вставьте шаблон со своими данными:
+            <div class="copy-wrap">
+              <pre><code>День рождения: 1990-05-15
+Время рождения: 08:30 (часовой пояс — опционально; если не знаете — напишите «не знаю»)
+Место рождения: Москва, Россия
+Текущее место проживания: Тбилиси, Грузия (опционально — для более точного прогноза)</code></pre>
+              <button type="button" class="copy-btn">Скопировать</button>
+            </div>
+          </li>
+          <li>
+            В поле <strong>Project instructions</strong> (инструкции) вставьте готовый промт — он заставляет Claude
+            считать всё через MCP-сервер, а не «по памяти»:
+            <div class="copy-wrap">
+              <pre><code>Ты — профессиональный астролог-аналитик. Отвечаешь на жизненные вопросы через
+астрологическую символику на основе точных расчётов.
+
+ПРАВИЛА РАСЧЁТОВ
+1. Все астрологические расчёты выполняй ТОЛЬКО через инструменты MCP-сервера
+   astro-mcp. Никогда не придумывай позиции планет и не считай их по памяти.
+2. Мои данные рождения бери из документов проекта: день, время и место рождения,
+   текущее место жительства.
+3. Если время рождения неизвестно — предупреди, что Асцендент и дома ненадёжны,
+   и используй 12:00.
+4. Если инструменты недоступны — остановись и попроси включить коннектор
+   astro-mcp (Customize → Connectors), а не отвечай без расчётов.
+5. Для прогнозов указывай диапазоны дат и орбисы аспектов; структурируй ответ
+   по темам (карьера, отношения, здоровье, личный рост).
+6. Не делай фаталистичных предсказаний — описывай тенденции, энергии
+   и временные окна.
+
+ИНСТРУМЕНТЫ ПО ЗАДАЧАМ
+— Личность, карта рождения ......... calculate_natal_chart
+— «Что сейчас происходит» .......... calculate_transits + calculate_profections
+                                       + calculate_secondary_progressions
+— Тема года ......................... calculate_profections + calculate_solar_return
+— Отношения ......................... calculate_synastry + calculate_composite_chart
+— Точные даты пиков ................. find_aspect_exact_dates
+— Лучшее время для старта ........... get_planetary_hours + calculate_transits
+                                       (учитывай void of course Луны)
+— Неизвестное время рождения ........ calculate_rectification_hints
+                                       (нужно 3–5 точных дат событий из жизни)</code></pre>
+              <button type="button" class="copy-btn">Скопировать</button>
+            </div>
+          </li>
+          <li>Всё. Откройте чат внутри проекта и спрашивайте — Claude уже знает ваши данные и умеет считать.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ============ STEP 3 ============ -->
+    <section class="section section-step" id="step-3">
+      <div class="container">
+        <p class="kicker">Шаг 3</p>
+        <h2>Что спросить у своего астролога</h2>
+        <p class="section-lead">Примеры реальных запросов — каждый запускает настоящий расчёт.</p>
+        <div class="examples">
+          <figure class="example">
+            <blockquote>«Построй мою натальную карту: выдели 5 самых сильных сторон и 3 главных вызова»</blockquote>
+            <figcaption>натальная карта · дома · аспекты</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Что у меня происходит сейчас? Транзиты, профекции и прогрессии на ближайший месяц»</blockquote>
+            <figcaption>прогноз на период</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Какая главная тема этого года для меня и на что делать ставку?»</blockquote>
+            <figcaption>соляр · годовые профекции</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Проанализируй мои отношения с партнёром: дата, время и место его рождения — … Ключевые точки притяжения и напряжения»</blockquote>
+            <figcaption>синастрия · композит</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Я не знаю точное время рождения. Вот даты пяти важных событий моей жизни: … Подскажи наиболее вероятное время»</blockquote>
+            <figcaption>ректификация по событиям</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Когда лучше запустить проект? Подбери благоприятное окно в ближайшие две недели — учти void of course Луны и планетные часы»</blockquote>
+            <figcaption>элективная астрология · тайминг</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Когда Юпитер точно соединится с моим натальным Солнцем — и что это мне даст?»</blockquote>
+            <figcaption>точные даты аспектов</figcaption>
+          </figure>
+          <figure class="example">
+            <blockquote>«Расскажи про свои самые значимые скрытые связи в карте — антискии и арабские точки»</blockquote>
+            <figcaption>антискии · арабские части</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TOOLS ============ -->
+    <section class="section" id="tools">
+      <div class="container">
+        <h2>Что внутри</h2>
+        <p class="section-lead">14 инструментов расчёта на швейцарских эфемеридах (покрытие 1800–2400 гг.). Именно их Claude вызывает, отвечая на ваши вопросы.</p>
+        <ul class="tools">
+          <li><code>calculate_natal_chart</code><span>натальная карта: планеты, углы, дома, аспекты</span></li>
+          <li><code>calculate_transits</code><span>транзиты, фазы Луны, полнолуния, void of course</span></li>
+          <li><code>calculate_secondary_progressions</code><span>вторичные прогрессии и солнечная дуга</span></li>
+          <li><code>calculate_solar_return</code><span>соляр — карта солнечного возвращения</span></li>
+          <li><code>calculate_lunar_return</code><span>лунар — карта лунного возвращения</span></li>
+          <li><code>calculate_profections</code><span>годовые профекции и управитель года</span></li>
+          <li><code>calculate_synastry</code><span>синастрия: перекрёстные аспекты и дома</span></li>
+          <li><code>calculate_composite_chart</code><span>композитная карта пары (midpoint / Дэвисон)</span></li>
+          <li><code>calculate_rectification_hints</code><span>восстановление времени рождения по событиям</span></li>
+          <li><code>calculate_arabic_parts</code><span>12 арабских точек: Фортуны, Брака, Карьеры…</span></li>
+          <li><code>calculate_antiscia</code><span>антискии — скрытые зеркальные связи</span></li>
+          <li><code>get_planetary_hours</code><span>планетные часы любого дня и города</span></li>
+          <li><code>get_ephemeris</code><span>таблица эфемерид, ретро-петли планет</span></li>
+          <li><code>find_aspect_exact_dates</code><span>точные даты, когда аспект совершен</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ LIMITS ============ -->
+    <section class="section" id="limits">
+      <div class="container">
+        <h2>Честные ограничения</h2>
+        <div class="limits">
+          <div class="limit">
+            <h3>Бесплатные планы</h3>
+            <p>Бесплатный Claude подключает <strong>один</strong> кастомный коннектор — этого достаточно. Render Free даёт 750 часов в месяц; инстанс спит 15 минут без трафика и просыпается ~50 секунд.</p>
+          </div>
+          <div class="limit">
+            <h3>Приватность</h3>
+            <p>Через общий инстанс (вариант А) проходят параметры ваших запросов — города и даты. Для полной приватности разверните свой инстанс одной кнопкой (вариант Б).</p>
+          </div>
+          <div class="limit">
+            <h3>Диапазон расчётов</h3>
+            <p>Файлы эфемерид покрывают <strong>1800–2400 гг.</strong> Даты вне диапазона сервер честно отклонит.</p>
+          </div>
+          <div class="limit">
+            <h3>Точность</h3>
+            <p>Без времени рождения Асцендент и дома рассчитать нельзя — Claude предупредит об этом. Время можно восстановить ректификацией по датам событий жизни.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <p class="footer-links">
+        <a href="https://github.com/DrewCyber/astro-mcp" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/DrewCyber/astro-mcp#readme" target="_blank" rel="noopener">README</a>
+        <a href="https://github.com/DrewCyber/astro-mcp/blob/main/DEPLOY.md" target="_blank" rel="noopener">Продвинутый деплой</a>
+      </p>
+      <p>Расчёты — <a href="https://www.astro.com/swisseph/" target="_blank" rel="noopener">Swiss Ephemeris</a> · сервер astro-mcp · сделано с ✦ для звёзд</p>
+      <p class="footer-disclaimer">Астрология носит ознакомительный характер и не заменяет консультаций профессиональных специалистов — медицинских, финансовых и юридических.</p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      var LABEL = 'Скопировать';
+      document.querySelectorAll('.copy-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var box = btn.closest('.copy-wrap');
+          var code = box && box.querySelector('code');
+          if (!code) return;
+          var text = code.innerText;
+          var done = function () {
+            btn.textContent = 'Скопировано ✓';
+            btn.classList.add('copied');
+            setTimeout(function () {
+              btn.textContent = LABEL;
+              btn.classList.remove('copied');
+            }, 2000);
+          };
+          var fallback = function () {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            ta.remove();
+            if (ok) done();
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, fallback);
+          } else {
+            fallback();
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
