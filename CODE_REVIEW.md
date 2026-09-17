@@ -9,7 +9,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R01 Cross-chart aspects: preserve same-body contacts; fixed natal targets must have zero effective speed. (`core/ephemeris_provider.py`, transit/progression/return/synastry/rectification callers)
 - [x] R02 Exact-aspect bisection: reject angular discontinuities, validate residuals and exact endpoints.
 - [ ] R03 Internal precision: retain raw point longitude/speed/orb; consistent node motion; normalize serialization carry at sign boundaries.
-- [ ] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
+- [x] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
 - [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
 - [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
 - [ ] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R04 — antiscia raw contacts and reflected motion
+
+Completed the remaining antiscia half of R04 (Arabic parts were fixed earlier). Natal and transit contacts consume internal mirrored points, not rounded output dictionaries; both reflections reverse speed. Four decimal/DMS boundary regressions cover contacts inside/outside the orb, reflected retrograde flags, dictionary output and JSON serialization. Full gates: 377 tests, 91.42% coverage, Ruff and strict mypy clean. The shared point builder's six-decimal rounding remains tracked separately under R03.
 
 ### R11 — synastry weights
 

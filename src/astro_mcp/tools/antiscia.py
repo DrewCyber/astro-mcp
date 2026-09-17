@@ -12,7 +12,7 @@ from astro_mcp.core.ephemeris_provider import (
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.models import ANGLE_KEYS
+from astro_mcp.core.models import ANGLE_KEYS, ChartPoint
 from astro_mcp.tools.natal import compute_natal
 
 # Antiscia mirror about the 0 Cancer / 0 Capricorn (solstitial) axis.
@@ -32,7 +32,7 @@ def contra_antiscion(lon: float) -> float:
 
 
 def _transit_contacts(
-    mirrors: dict[str, dict[str, dict[str, Any]]],
+    mirrors: dict[str, dict[str, ChartPoint]],
     transit_date: str,
     orb: float,
 ) -> list[dict[str, Any]]:
@@ -56,7 +56,7 @@ def _transit_contacts(
     for kind, mirror in mirrors.items():
         for m_code, m_data in mirror.items():
             for t_code, t_pt in transiting.items():
-                o = angular_distance(m_data["deg"], t_pt.lon_decimal)
+                o = angular_distance(m_data.lon_decimal, t_pt.lon_decimal)
                 if o <= orb:
                     hits.append({
                         "transit": t_code,
@@ -90,26 +90,22 @@ def calculate_antiscia(
     chart = compute_natal(birth_date, birth_time, birth_location, house_system)
     points = chart.all_points
 
-    antiscia: dict[str, dict[str, Any]] = {}
-    contra: dict[str, dict[str, Any]] = {}
+    antiscia: dict[str, ChartPoint] = {}
+    contra: dict[str, ChartPoint] = {}
 
     for code, pt in points.items():
         if code in ANGLE_KEYS:
             continue
         a_lon = antiscion(pt.lon_decimal)
-        antiscia[code] = serialize_point(
-            build_chart_point(a_lon, pt.speed, chart.cusps), degree_format
-        )
+        antiscia[code] = build_chart_point(a_lon, -pt.speed, chart.cusps)
         if include_contra:
             c_lon = contra_antiscion(pt.lon_decimal)
-            contra[code] = serialize_point(
-                build_chart_point(c_lon, pt.speed, chart.cusps), degree_format
-            )
+            contra[code] = build_chart_point(c_lon, -pt.speed, chart.cusps)
 
-    def _contacts(mirror: dict[str, dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+    def _contacts(mirror: dict[str, ChartPoint], kind: str) -> list[dict[str, Any]]:
         hits: list[dict[str, Any]] = []
         for m_code, m_data in mirror.items():
-            m_lon = m_data["deg"]
+            m_lon = m_data.lon_decimal
             for n_code, n_pt in points.items():
                 if n_code == m_code:
                     continue
@@ -126,11 +122,13 @@ def calculate_antiscia(
 
     result: dict[str, Any] = {
         "orb_used": orb,
-        "antiscia": antiscia,
+        "antiscia": {k: serialize_point(v, degree_format) for k, v in antiscia.items()},
         "contacts": _contacts(antiscia, "antiscion"),
     }
     if include_contra:
-        result["contra_antiscia"] = contra
+        result["contra_antiscia"] = {
+            k: serialize_point(v, degree_format) for k, v in contra.items()
+        }
         result["contacts"].extend(_contacts(contra, "contra-antiscion"))
         result["contacts"].sort(key=lambda h: float(h["orb"]))
 
