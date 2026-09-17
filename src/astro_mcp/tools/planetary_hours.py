@@ -34,16 +34,16 @@ def get_planetary_hours(
 
     # Search from local midnight (00:00 local → UTC) so rise_trans always finds
     # today's sunrise and sunset regardless of the UTC offset.
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo as _ZI
-    local_midnight = _dt.fromisoformat(f"{date}T00:00:00").replace(tzinfo=_ZI(tz))
-    utc_midnight = local_midnight.astimezone(_ZI("UTC"))
+    local_midnight = datetime.fromisoformat(f"{date}T00:00:00").replace(tzinfo=ZoneInfo(geo.tz))
+    utc_midnight = local_midnight.astimezone(ZoneInfo("UTC"))
     jd_start = to_jd(utc_midnight.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
     jd_rise, jd_set = calc_rise_set(jd_start, geo.lat, geo.lon)
+    if jd_set <= jd_rise:
+        _, jd_set = calc_rise_set(jd_rise + 1 / 86400, geo.lat, geo.lon)
 
     # Weekday of the date (using local timezone)
-    dt_local = datetime.fromisoformat(f"{date}T12:00:00").replace(tzinfo=ZoneInfo(tz))
+    dt_local = datetime.fromisoformat(f"{date}T12:00:00").replace(tzinfo=ZoneInfo(geo.tz))
     weekday = dt_local.weekday()  # Mon=0..Sun=6
     day_ruler = WEEKDAY_TO_RULER[weekday]
 
