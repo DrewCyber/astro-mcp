@@ -21,13 +21,13 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
 - [x] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
 - [x] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
-- [ ] R16 HTTP: configured Host/Origin validation and bounded admission; assess quotas/auth without silently changing public access contract.
+- [x] R16 HTTP: configured Host/Origin validation and bounded admission; assess quotas/auth without silently changing public access contract.
 - [x] R17 Orb schemas: recognized keys and bounded finite values.
 - [x] R18 Ephemeris downloads: pinned source, checksums, atomic downloads, validation of existing files.
-- [ ] R19 Ephemeris initialization/thread policy and sunrise error/fallback handling: validate reported risks, enforce consistent initialization.
+- [x] R19 Ephemeris initialization/thread policy and sunrise error/fallback handling: validate reported risks, enforce consistent initialization.
 - [x] R20 Preserve fractional seconds in Julian-day conversion.
-- [ ] R21 Reduce repeated lunar and rectification computations without changing results.
-- [ ] R22 Broaden regression/HTTP tests; raise coverage floor if achieved coverage permits.
+- [x] R21 Reduce repeated lunar and rectification computations without changing results.
+- [x] R22 Broaden regression/HTTP tests; raise coverage floor if achieved coverage permits.
 
 ## Validation record
 
@@ -48,6 +48,22 @@ Git history supplies commit hashes.
 ### R18 — verified atomic ephemeris downloads
 
 Pinned all four files to an immutable upstream revision and SHA-256 hashes. Existing files are verified on every run, including CI cache hits; replacement occurs only after a successful checksum in a same-directory temporary file. Nine offline tests cover installation, skipping verified files, repair, checksum rejection, failed/interrupted transfer cleanup, wget fallback, manifest shape and CI validation. Real upstream installation, repeat verification and corrupted-file repair were also exercised in a scratch directory. Docker's default download path remains `/app/ephe`; no container build was run. Full gates: 402 tests, 91.56% coverage, Ruff and strict mypy clean.
+
+### R19 — active ephemeris path and checked rise/set
+
+`init_ephemeris(custom)` now publishes the resolved active path with a generation counter; every calculation thread re-applies that path when its thread-local generation is stale, instead of pinning the startup default. Coverage detection and the Moshier-fallback hint follow the active path; a failed init leaves prior state untouched. `calc_rise_set` maps `swe.Error` to the ephemeris error set, treats only the -2 status as polar `NO_RISE_SET`, and the Sun's ephemeris is validated before the rise search. Eleven regressions pass, including Tromsø polar day/night. Full gates: 446 tests, 91.99% coverage, Ruff and strict mypy clean.
+
+### R16 — HTTP header validation and bounded admission
+
+The SDK now receives `HOST` (loopback bindings keep its automatic DNS-rebinding guard; bare `localhost` without a port is rejected by SDK design). Optional `HTTP_ALLOWED_HOSTS`/`HTTP_ALLOWED_ORIGINS` JSON lists enable explicit `TransportSecuritySettings` validation for public deployments without introducing auth. An ASGI admission middleware caps active `/mcp` exchanges per worker (default 16, `HTTP_MAX_CONCURRENT_REQUESTS`), returning 503 with `Retry-After: 2` immediately, no queue; `/health` bypasses it. 24 focused HTTP regressions pass. No container or hosted smoke test was run.
+
+### R21 — measured lunar call sharing
+
+Operation-local memoization of Moon/Sun longitudes inside `_aspect_times` and `next_lunations` reduced measured `calc_planet` calls (aspect scan 1356→349, lunations 542→430, void-of-course 1459→452) with exact-output regressions across three dates and per-operation cache isolation; no global state. Combined with the earlier rectification/grouping work, R21 is complete.
+
+### R22 — coverage floor raised
+
+Suite grew from 326 tests/90.26% at review baseline to 446 tests/91.99%. The pytest coverage floor is raised from 88 to 91; it must never be lowered.
 
 ### R05 — categorized bounded failures and concurrent persistence
 
