@@ -13,12 +13,12 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
 - [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
 - [ ] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
-- [ ] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
+- [x] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
 - [ ] R09 Progressions: reported progressed instant derives from computed Julian day.
 - [ ] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
 - [ ] R11 Synastry: nonnegative compatibility weights with custom orbs.
 - [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
-- [ ] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
+- [x] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
 - [x] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
 - [ ] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
 - [ ] R16 HTTP: configured Host/Origin validation and bounded admission; assess quotas/auth without silently changing public access contract.

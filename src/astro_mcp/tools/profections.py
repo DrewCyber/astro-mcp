@@ -87,8 +87,8 @@ def calculate_profections(
     activated_houses = [((prof_house_num - 1 + offset) % 12) + 1 for offset in (0, 3, 6, 9)]
 
     activated_planets: list[str] = []
-    for h in activated_houses:
-        sign = chart.houses[h - 1].sign
+    for offset in (0, 3, 6, 9):
+        sign = SIGNS[(prof_sign_idx + offset) % 12]
         ruler, _ = RULERS[sign]
         if ruler not in activated_planets:
             activated_planets.append(ruler)
