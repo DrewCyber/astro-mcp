@@ -14,7 +14,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
 - [ ] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
 - [x] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
-- [ ] R09 Progressions: reported progressed instant derives from computed Julian day.
+- [x] R09 Progressions: reported progressed instant derives from computed Julian day.
 - [ ] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
 - [ ] R11 Synastry: nonnegative compatibility weights with custom orbs.
 - [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R09 — progressed instant
+
+A 23:30 UTC birth reproduced a one-day discrepancy between `prog_day` and the actual progressed Julian day. The date now comes from that Julian day, with the full instant exposed as `prog_datetime_utc`. UTC and Tokyo boundary regressions pass, as do all six progression tests. Full gates: 370 tests, 91.41% coverage, Ruff and strict mypy clean.
 
 ### R15 / R17 — release gating and orb validation
 

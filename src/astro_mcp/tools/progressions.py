@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date as Date
-from datetime import timedelta
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
@@ -11,6 +10,7 @@ from astro_mcp.core.ephemeris_provider import (
     calc_all_planets,
     calc_houses,
     find_aspects,
+    jd_to_iso,
     lon_to_sign_info,
 )
 from astro_mcp.core.errors import AstroError
@@ -76,7 +76,7 @@ def calculate_secondary_progressions(
 
     # Day-for-a-year: advance the ephemeris one day per year of life.
     prog_jd = chart.jd + age_years
-    prog_day_str = (b_date + timedelta(days=age_years)).isoformat()
+    prog_datetime_utc = jd_to_iso(prog_jd)
 
     cusps, ascmc = calc_houses(
         prog_jd, chart.geo.lat, chart.geo.lon, chart.house_system
@@ -106,7 +106,8 @@ def calculate_secondary_progressions(
     result: dict[str, Any] = {
         "prog_date": progression_date,
         "prog_age": round(age_years, 2),
-        "prog_day": prog_day_str,
+        "prog_day": prog_datetime_utc[:10],
+        "prog_datetime_utc": prog_datetime_utc,
         # The progressed angles are the QUOTIDIAN angles of the progressed
         # day: houses cast for prog_jd at the birth place, so they advance
         # ~360+1 deg per year of life. This is a recognised convention but
