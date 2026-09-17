@@ -88,7 +88,8 @@ def calculate_secondary_progressions(
 
     # Prog -> Natal aspects
     prog_all: dict[str, ChartPoint] = {**prog_planets, **prog_angles}
-    p2n = find_aspects(prog_all, natal_points, angle_orb_keys=set(ANGLE_KEYS))
+    p2n = find_aspects(prog_all, natal_points, angle_orb_keys=set(ANGLE_KEYS),
+                       cross_chart=True, fixed_target=True)
 
     # Prog -> Prog aspects
     p2p = dedupe_aspects(find_aspects(prog_planets, prog_planets, angle_orb_keys=set()))

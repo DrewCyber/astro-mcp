@@ -127,7 +127,8 @@ def calculate_solar_return(
     sr_houses = build_house_cusps(cusps)
 
     sr_all: dict[str, ChartPoint] = {**sr_planets, **sr_angles}
-    sr2n = find_aspects(sr_all, chart.all_points, angle_orb_keys={"Asc", "MC"})
+    sr2n = find_aspects(sr_all, chart.all_points, angle_orb_keys={"Asc", "MC"},
+                        cross_chart=True, fixed_target=True)
 
     result: dict[str, Any] = {
         "return_dt": jd_to_iso(sr_jd),

@@ -150,6 +150,7 @@ def _score_candidate(
             raw_asps = find_aspects(
                 tr_planets, natal_points,
                 angle_orb_keys=set(ANGLE_KEYS),
+                cross_chart=True, fixed_target=True,
             )
             for asp in raw_asps:
                 if asp.orb > MAX_ORB:
@@ -189,7 +190,8 @@ def _score_candidate(
                     None, lord_pt.retrograde, lord_pt.speed,
                 )
 
-            for asp in find_aspects(tr_planets, targets, angle_orb_keys=set(targets)):
+            for asp in find_aspects(tr_planets, targets, angle_orb_keys=set(targets),
+                                    cross_chart=True, fixed_target=True):
                 if asp.orb > MAX_ORB:
                     continue
                 corr_score = score_event_match(asp.orb, asp.aspect_type, "profections")
@@ -211,7 +213,8 @@ def _score_candidate(
             tr_lord = tr_planets.get(lord)
             if tr_lord is not None:
                 for asp in find_aspects({lord: tr_lord}, natal_points,
-                                        angle_orb_keys=set(ANGLE_KEYS)):
+                                        angle_orb_keys=set(ANGLE_KEYS),
+                                        cross_chart=True, fixed_target=True):
                     if asp.orb > MAX_ORB:
                         continue
                     corr_score = score_event_match(asp.orb, asp.aspect_type, "profections")

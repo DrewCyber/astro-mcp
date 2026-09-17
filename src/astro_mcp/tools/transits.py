@@ -252,6 +252,8 @@ def calculate_transits(
         natal_points,
         custom_orbs=orbs,
         angle_orb_keys=set(ANGLE_KEYS),
+        cross_chart=True,
+        fixed_target=True,
     )
 
     # max_orb is a relevance cut, so it runs before the significance ranking:

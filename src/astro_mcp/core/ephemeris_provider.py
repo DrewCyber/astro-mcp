@@ -511,15 +511,24 @@ def find_aspects(
     orb_factor: float | None = None,
     angle_orb_keys: set[str] | None = None,
     custom_orbs: dict[str, float] | None = None,
+    *,
+    cross_chart: bool = False,
+    fixed_target: bool = False,
 ) -> list[Aspect]:
-    """Find all aspects between two sets of chart points."""
+    """Find aspects, excluding same-key self contacts within a chart by default.
+
+    Set ``cross_chart`` for distinct charts, where Su-Su (etc.) is meaningful.
+    Set ``fixed_target`` when points_b are frozen natal positions: applying is
+    then determined by points_a's motion alone, not by the natal birth speeds.
+    Synastry retains the default relative-speed convention.
+    """
     angle_orb_keys = angle_orb_keys or set()
     if orb_factor is None:
         orb_factor = settings.default_orb_factor
     aspects = []
     for k1, p1 in points_a.items():
         for k2, p2 in points_b.items():
-            if k1 == k2:
+            if k1 == k2 and not cross_chart:
                 continue
             dist = angular_distance(p1.lon_decimal, p2.lon_decimal)
             for asp_code, asp_angle in ASPECT_ANGLES.items():
@@ -531,7 +540,10 @@ def find_aspects(
                     orb_limit = DEFAULT_ORBS.get(asp_code, 2.0) * orb_factor
                 orb = abs(dist - asp_angle)
                 if orb <= orb_limit:
-                    applying = is_applying(p1.lon_decimal, p1.speed, p2.lon_decimal, p2.speed, asp_angle)
+                    applying = is_applying(
+                        p1.lon_decimal, p1.speed, p2.lon_decimal,
+                        0.0 if fixed_target else p2.speed, asp_angle,
+                    )
                     aspects.append(Aspect(
                         k1, k2, asp_code, round(orb, 2), applying,
                         significance=aspect_significance(k1, k2, asp_code, orb, orb_limit),
@@ -590,18 +602,36 @@ def find_exact_aspect_jd(
     d_start = diff_at(jd_start)
     d_end = diff_at(jd_end)
 
+    # Preserve exact endpoints, including a zero-width bracket.
+    if d_start == 0:
+        return jd_start
+    if d_end == 0:
+        return jd_end
     if d_start * d_end > 0:
         return None  # no crossing
 
+    def validated(jd: float) -> float | None:
+        lon1, speed1 = calc_planet(jd, pid1)
+        if natal_lon2 is not None:
+            lon2, speed2 = natal_lon2, 0.0
+        else:
+            lon2, speed2 = calc_planet(jd, pid2)  # type: ignore[arg-type]
+        residual = abs(angular_distance(lon1, lon2) - asp_angle)
+        # Convert the time tolerance to an angular tolerance. A signed-delta
+        # sign change alone can instead bracket the +/-180 degree branch cut.
+        angular_tolerance = max(1e-7, abs(speed1 - speed2) * tolerance)
+        return jd if residual <= angular_tolerance else None
+
     for _ in range(80):  # max iterations
         jd_mid = (jd_start + jd_end) / 2
-        if abs(jd_end - jd_start) < tolerance:
-            return jd_mid
         d_mid = diff_at(jd_mid)
+        if d_mid == 0:
+            return jd_mid
+        if abs(jd_end - jd_start) < tolerance or jd_mid in (jd_start, jd_end):
+            return validated(jd_mid)
         if d_start * d_mid <= 0:
             jd_end = jd_mid
-            d_end = d_mid
         else:
             jd_start = jd_mid
             d_start = d_mid
-    return (jd_start + jd_end) / 2
+    return validated((jd_start + jd_end) / 2)

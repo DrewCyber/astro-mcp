@@ -6,8 +6,8 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 
 ## Ordered remediation
 
-- [ ] R01 Cross-chart aspects: preserve same-body contacts; fixed natal targets must have zero effective speed. (`core/ephemeris_provider.py`, transit/progression/return/synastry/rectification callers)
-- [ ] R02 Exact-aspect bisection: reject angular discontinuities, validate residuals and exact endpoints.
+- [x] R01 Cross-chart aspects: preserve same-body contacts; fixed natal targets must have zero effective speed. (`core/ephemeris_provider.py`, transit/progression/return/synastry/rectification callers)
+- [x] R02 Exact-aspect bisection: reject angular discontinuities, validate residuals and exact endpoints.
 - [ ] R03 Internal precision: retain raw point longitude/speed/orb; consistent node motion; normalize serialization carry at sign boundaries.
 - [ ] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
 - [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.

@@ -78,7 +78,8 @@ def calculate_synastry(
     used_orbs = orbs or default_syn_orbs
 
     cross_aspects = find_aspects(
-        pts1, pts2, custom_orbs=used_orbs, angle_orb_keys=set(ANGLE_KEYS)
+        pts1, pts2, custom_orbs=used_orbs, angle_orb_keys=set(ANGLE_KEYS),
+        cross_chart=True,
     )
 
     # Compatibility indicators describe the whole relationship, so they are
