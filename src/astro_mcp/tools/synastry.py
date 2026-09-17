@@ -118,13 +118,18 @@ def calculate_synastry(
     ]
 
     # Tightness-weighted totals: each aspect contributes (max_orb - orb), so a
-    # partile aspect counts for much more than one at the edge of orb.  These
-    # are relative indicators for comparing charts, not absolute percentages.
+    # partile aspect counts for much more than one at the edge of orb.  Custom
+    # orbs can allow an orb wider than that 8-degree default, so the weight is
+    # clamped at zero — an aspect at the edge of a wide custom orb must not
+    # subtract from the total.  These are relative indicators for comparing
+    # charts, not absolute percentages.
     harmony_score = round(
-        sum(8 - a.orb for a in cross_aspects if a.aspect_type in HARMONY_ASPECTS), 1
+        sum(max(0.0, 8 - a.orb) for a in cross_aspects
+            if a.aspect_type in HARMONY_ASPECTS), 1
     )
     tension_score = round(
-        sum(8 - a.orb for a in cross_aspects if a.aspect_type not in HARMONY_ASPECTS), 1
+        sum(max(0.0, 8 - a.orb) for a in cross_aspects
+            if a.aspect_type not in HARMONY_ASPECTS), 1
     )
 
     return {

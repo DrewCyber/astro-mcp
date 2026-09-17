@@ -16,7 +16,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
 - [x] R09 Progressions: reported progressed instant derives from computed Julian day.
 - [x] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
-- [ ] R11 Synastry: nonnegative compatibility weights with custom orbs.
+- [x] R11 Synastry: nonnegative compatibility weights with custom orbs.
 - [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
 - [x] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
 - [x] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R11 — synastry weights
+
+Reproduced a negative harmony total for a 10-degree conjunction accepted through a wide custom orb. Compatibility weights now clamp at zero. Nine focused tests pass; full gates: 373 tests, 91.42% coverage, Ruff and strict mypy clean.
 
 ### R10 — Davison midpoint houses
 
