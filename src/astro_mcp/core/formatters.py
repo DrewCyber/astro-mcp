@@ -9,6 +9,7 @@ from astro_mcp.core.ephemeris_provider import lon_to_sign_info
 from astro_mcp.core.models import (
     ASPECT_NAMES,
     PLANET_NAMES,
+    RULERS,
     SIGN_NAMES,
     Aspect,
     ChartPoint,
@@ -21,10 +22,9 @@ from astro_mcp.core.models import (
 
 def decimal_to_dms(decimal_deg: float) -> str:
     """Convert decimal degrees (within a sign, 0-30) to 'DD°MM'SS\"'."""
-    deg = int(decimal_deg)
-    rem = (decimal_deg - deg) * 60
-    minutes = int(rem)
-    seconds = int((rem - minutes) * 60)
+    total_seconds = round(decimal_deg * 3600)
+    deg, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
     return f"{deg:02d}\u00b0{minutes:02d}'{seconds:02d}\""
 
 
@@ -45,12 +45,12 @@ def serialize_point(
     mode it is dropped entirely, because a stringified copy of ``deg`` is pure
     duplication and invites consumers to parse a number out of a string.
     """
-    result: dict[str, Any] = {
-        "sign": point.sign,
-        "deg": round(point.lon_decimal, 2),
-    }
+    longitude = (round(point.lon_decimal * 3600) / 3600 if degree_format == "dms"
+                 else round(point.lon_decimal, 2)) % 360
+    sign, sign_lon = lon_to_sign_info(longitude)
+    result: dict[str, Any] = {"sign": sign, "deg": round(longitude, 6)}
     if degree_format == "dms":
-        result = {"lon": decimal_to_dms(point.sign_lon) + point.sign, **result}
+        result = {"lon": decimal_to_dms(sign_lon) + sign, **result}
     if include_house and point.house is not None:
         result["house"] = point.house
     if point.retrograde:
@@ -63,7 +63,7 @@ def serialize_aspect(asp: Aspect) -> dict[str, Any]:
         "p1": asp.point1,
         "p2": asp.point2,
         "asp": asp.aspect_type,
-        "orb": asp.orb,
+        "orb": round(asp.orb, 2),
         "apply": asp.applying,
         "sig": asp.significance,
     }
@@ -89,19 +89,21 @@ def build_legend() -> dict[str, Any]:
 
 
 def serialize_house(hc: HouseCusp, degree_format: str = "dec") -> dict[str, Any]:
-    sign, sign_lon = lon_to_sign_info(hc.lon_decimal)
+    cusp = (round(hc.lon_decimal * 3600) / 3600 if degree_format == "dms"
+            else round(hc.lon_decimal, 2)) % 360
+    sign, sign_lon = lon_to_sign_info(cusp)
     if degree_format == "dms":
         cusp_str = decimal_to_dms(sign_lon) + sign
     else:
-        cusp_str = str(round(hc.lon_decimal, 2))
+        cusp_str = str(cusp)
     d: dict[str, Any] = {
         "n": hc.number,
         "cusp": cusp_str,
-        "sign": hc.sign,
-        "ruler": hc.ruler,
+        "sign": sign,
+        "ruler": RULERS[sign][0],
     }
-    if hc.modern_ruler:
-        d["mod_ruler"] = hc.modern_ruler
+    if RULERS[sign][1]:
+        d["mod_ruler"] = RULERS[sign][1]
     return d
 
 

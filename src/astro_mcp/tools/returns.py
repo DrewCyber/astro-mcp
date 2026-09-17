@@ -139,7 +139,7 @@ def calculate_solar_return(
                       for k, v in sr_angles.items()},
         "sr_houses": [serialize_house(h, degree_format) for h in sr_houses],
         "sr_to_natal_aspects": [
-            {"sp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"sp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "sig": a.significance}
             for a in rank_aspects(sr2n, min_significance, top_n)
         ],

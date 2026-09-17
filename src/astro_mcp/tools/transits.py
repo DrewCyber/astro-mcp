@@ -273,7 +273,7 @@ def calculate_transits(
             "tp": asp.point1,
             "np": asp.point2,
             "asp": asp.aspect_type,
-            "orb": asp.orb,
+            "orb": round(asp.orb, 2),
             "apply": asp.applying,
             "sig": asp.significance,
             "exact": exact,

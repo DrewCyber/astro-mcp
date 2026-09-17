@@ -300,12 +300,12 @@ def build_chart_point(
     sign, sign_lon = lon_to_sign_info(longitude)
     h = house_of(longitude, cusps) if cusps else None
     return ChartPoint(
-        lon_decimal=round(longitude % 360, 6),
+        lon_decimal=longitude % 360,
         sign=sign,
-        sign_lon=round(sign_lon, 6),
+        sign_lon=sign_lon,
         house=h,
         retrograde=speed < 0,
-        speed=round(speed, 4),
+        speed=speed,
     )
 
 
@@ -429,11 +429,12 @@ def build_angles(ascmc: list[float], cusps: list[float]) -> dict[str, ChartPoint
 def build_house_cusps(cusps: list[float]) -> list[HouseCusp]:
     result = []
     for i, cusp_lon in enumerate(cusps):
+        cusp_lon = cusp_lon % 360
         sign, _ = lon_to_sign_info(cusp_lon)
         ruler, mod_ruler = RULERS[sign]
         result.append(HouseCusp(
             number=i + 1,
-            lon_decimal=round(cusp_lon % 360, 6),
+            lon_decimal=cusp_lon % 360,
             sign=sign,
             ruler=ruler,
             modern_ruler=mod_ruler,
@@ -545,7 +546,7 @@ def find_aspects(
                         0.0 if fixed_target else p2.speed, asp_angle,
                     )
                     aspects.append(Aspect(
-                        k1, k2, asp_code, round(orb, 2), applying,
+                        k1, k2, asp_code, orb, applying,
                         significance=aspect_significance(k1, k2, asp_code, orb, orb_limit),
                     ))
     aspects.sort(key=lambda a: (a.orb, -a.significance))

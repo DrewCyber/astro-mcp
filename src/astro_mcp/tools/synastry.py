@@ -90,7 +90,7 @@ def calculate_synastry(
             "p1_planet": a.point1,
             "p2_planet": a.point2,
             "asp": a.aspect_type,
-            "orb": a.orb,
+            "orb": round(a.orb, 2),
             "harmony": a.aspect_type in HARMONY_ASPECTS,
             "sig": a.significance,
         }
@@ -299,7 +299,7 @@ def calculate_composite_chart(
                         for k, v in comp_angles.items()},
         "comp_houses": [serialize_house(h, degree_format) for h in comp_houses],
         "comp_aspects": [
-            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "sig": a.significance}
             for a in comp_aspects
         ],

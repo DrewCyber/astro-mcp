@@ -117,12 +117,12 @@ def calculate_secondary_progressions(
         "angles_method": "quotidian",
         "prog_planets": prog_planets_out,
         "prog_to_natal_aspects": [
-            {"pp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"pp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "apply": a.applying, "sig": a.significance}
             for a in rank_aspects(p2n_in_orb, min_significance, top_n)
         ],
         "prog_to_prog_aspects": [
-            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "sig": a.significance}
             for a in rank_aspects(p2p_in_orb, min_significance, top_n)
         ],

@@ -8,7 +8,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 
 - [x] R01 Cross-chart aspects: preserve same-body contacts; fixed natal targets must have zero effective speed. (`core/ephemeris_provider.py`, transit/progression/return/synastry/rectification callers)
 - [x] R02 Exact-aspect bisection: reject angular discontinuities, validate residuals and exact endpoints.
-- [ ] R03 Internal precision: retain raw point longitude/speed/orb; consistent node motion; normalize serialization carry at sign boundaries.
+- [x] R03 Internal precision: retain raw point longitude/speed/orb; consistent node motion; normalize serialization carry at sign boundaries.
 - [x] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
 - [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
 - [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R03 — internal precision and chart serialization
+
+Points, speeds, cusps, derived nodes and aspect orbs no longer round inside the calculation layer. Tool payloads round aspect orbs explicitly. Chart point/house serializers carry rounded positions across sign boundaries, including traditional/modern ruler metadata; DMS uses whole-second precision rather than first reducing to hundredths of a degree. Four precision regressions and unchanged Einstein golden pins pass. Full verbose suite: 388 tests, 91.53% coverage, Ruff and strict mypy clean.
 
 ### R07 — bounded aspect scans and branch-aware groups
 
