@@ -12,7 +12,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
 - [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
 - [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
-- [ ] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
+- [x] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
 - [x] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
 - [x] R09 Progressions: reported progressed instant derives from computed Julian day.
 - [x] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R07 — bounded aspect scans and branch-aware groups
+
+Removed the annual auxiliary ephemeris scan. Exact endpoint/sample hits are included once; both scanning and orb-window walks stay inside the requested interval. Grouping checks continuous directed separation and reversed relative motion rather than temporal proximity alone; fast transit pairs remain independent. Regressions preserve the three 2021 Saturn–Uranus squares, separate six 2026 Mercury–Sun conjunctions and 24 lunar sextiles, and permit short December 2399 ranges. An independent hourly directed-arc count confirmed 12 sextiles per branch (the initial test expectation of 25 total was corrected). Full gates: 384 tests, 91.46% coverage, Ruff and strict mypy clean.
 
 ### R04 — antiscia raw contacts and reflected motion
 
