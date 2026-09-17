@@ -10,7 +10,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R02 Exact-aspect bisection: reject angular discontinuities, validate residuals and exact endpoints.
 - [x] R03 Internal precision: retain raw point longitude/speed/orb; consistent node motion; normalize serialization carry at sign boundaries.
 - [x] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
-- [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
+- [x] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
 - [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
 - [x] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
 - [x] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R05 — categorized bounded failures and concurrent persistence
+
+Completed the remaining cache scope after the earlier provider-exception/entry-validation fix. Negative entries retain code/message/hint, expire globally after 300 seconds and are capped at 1024. JSON persistence uses a SQLite transaction as a cross-process lock plus unique temporary files and merge-before-replace; the existing JSON format remains compatible. Tests cover four writes from two processes, repeated timeout classification, capacity and expiry. Full gates: 393 tests, 91.56% coverage, Ruff and strict mypy clean.
 
 ### R12 — rectification internal computations
 
