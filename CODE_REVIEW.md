@@ -23,7 +23,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
 - [ ] R16 HTTP: configured Host/Origin validation and bounded admission; assess quotas/auth without silently changing public access contract.
 - [x] R17 Orb schemas: recognized keys and bounded finite values.
-- [ ] R18 Ephemeris downloads: pinned source, checksums, atomic downloads, validation of existing files.
+- [x] R18 Ephemeris downloads: pinned source, checksums, atomic downloads, validation of existing files.
 - [ ] R19 Ephemeris initialization/thread policy and sunrise error/fallback handling: validate reported risks, enforce consistent initialization.
 - [x] R20 Preserve fractional seconds in Julian-day conversion.
 - [ ] R21 Reduce repeated lunar and rectification computations without changing results.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R18 — verified atomic ephemeris downloads
+
+Pinned all four files to an immutable upstream revision and SHA-256 hashes. Existing files are verified on every run, including CI cache hits; replacement occurs only after a successful checksum in a same-directory temporary file. Nine offline tests cover installation, skipping verified files, repair, checksum rejection, failed/interrupted transfer cleanup, wget fallback, manifest shape and CI validation. Real upstream installation, repeat verification and corrupted-file repair were also exercised in a scratch directory. Docker's default download path remains `/app/ephe`; no container build was run. Full gates: 402 tests, 91.56% coverage, Ruff and strict mypy clean.
 
 ### R05 — categorized bounded failures and concurrent persistence
 

@@ -34,8 +34,7 @@ jobs:
       - name: Install
         run: uv sync --frozen --extra dev --python "${{ matrix.python-version }}"
 
-      - name: Cache Swiss Ephemeris data
-        id: ephe-cache
+      - name: Restore Swiss Ephemeris data
         uses: actions/cache@v4
         with:
           path: ephe
@@ -43,9 +42,10 @@ jobs:
 
       # The .se1 files are not in the repo. Without them pyswisseph silently
       # downgrades to the low-precision Moshier ephemeris, so the accuracy
-      # assertions must not run against a missing data set.
+      # assertions must not run against a missing data set. The script itself
+      # verifies checksums, so a partially cached or corrupted directory is
+      # repaired rather than trusted.
       - name: Download ephemeris data
-        if: steps.ephe-cache.outputs.cache-hit != 'true'
         run: bash scripts/download_ephe.sh
 
       - name: Lint
