@@ -11,7 +11,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [ ] R03 Internal precision: retain raw point longitude/speed/orb; consistent node motion; normalize serialization carry at sign boundaries.
 - [ ] R04 Derived tools: Arabic parts and antiscia must calculate contacts from raw points, never serialized `deg`; reflected motion must reverse sign.
 - [ ] R05 Geocoding: propagate provider exceptions; bounded negative cache with correct error categories; validate persistent entries; safe concurrent persistence.
-- [ ] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
+- [x] R06 Planetary hours: anchor requested day in location timezone; output timezone only renders; chronological sunrise/sunset.
 - [ ] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
 - [ ] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
 - [ ] R09 Progressions: reported progressed instant derives from computed Julian day.
@@ -19,7 +19,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [ ] R11 Synastry: nonnegative compatibility weights with custom orbs.
 - [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
 - [ ] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
-- [ ] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
+- [x] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
 - [ ] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
 - [ ] R16 HTTP: configured Host/Origin validation and bounded admission; assess quotas/auth without silently changing public access contract.
 - [ ] R17 Orb schemas: recognized keys and bounded finite values.
@@ -43,4 +43,14 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 
 ## Completed fixes
 
-Each fix records its implementation, regression tests, gate results, and commit subject here. Git history supplies commit hashes.
+Git history supplies commit hashes.
+
+### R14 — dispatcher errors
+
+`Union Alpha: mark MCP failures and sanitize unexpected execution errors`
+
+Added seven protocol regressions in `tests/test_review_dispatcher.py`. Baseline fails on `is_error=False` and discloses `private-path`; restored fix passes all 14 dispatcher tests. Full working-tree gates: 351 passed, 90.23% coverage, Ruff clean, strict mypy clean. Other in-progress changes are not included in this commit.
+
+### R06 — planetary hours
+
+Committed as `e11187e` (Union Alpha prefix). Tokyo reproduction produced backward hours before the fix; output timezones now affect rendering only. Ten planetary-hours tests passed; full gates at commit time: 328 passed, Ruff and strict mypy clean.

@@ -48,6 +48,16 @@ def _err(code: str, message: str, hint: str = "") -> list[ContentBlock]:
     return [TextContent(type="text", text=to_compact_json(payload))]
 
 
+def _result(content: list[ContentBlock], *, is_error: bool = False) -> CallToolResult:
+    """Build a CallToolResult that always marks the MCP error envelope.
+
+    A structured JSON error payload inside ``content`` is invisible to clients
+    that only inspect the protocol-level ``isError`` flag, so every failure
+    path must set it. Success results stay ``isError=False``.
+    """
+    return CallToolResult(content=content, is_error=is_error)
+
+
 def _load_tool(name: str) -> Callable[..., Any] | None:
     """Import a tool function lazily so a broken module cannot block startup."""
     entry = _TOOL_REGISTRY.get(name)
@@ -141,12 +151,13 @@ async def _call_tool(
     model = TOOL_INPUTS.get(name)
 
     if model is None or name not in _TOOL_REGISTRY:
-        return CallToolResult(
-            content=_err(
+        return _result(
+            _err(
                 "UNKNOWN_TOOL",
                 f"Tool '{name}' not found.",
                 hint=f"Available tools: {', '.join(sorted(_TOOL_REGISTRY))}",
-            )
+            ),
+            is_error=True,
         )
 
     try:
@@ -155,32 +166,35 @@ async def _call_tool(
         func = _load_tool(name)
     except Exception:
         logger.exception("Failed to load tool %s", name)
-        return CallToolResult(
-            content=_err(
+        return _result(
+            _err(
                 "INTERNAL_ERROR",
                 f"Tool '{name}' is unavailable.",
                 hint="Check the server logs for details.",
-            )
+            ),
+            is_error=True,
         )
     if func is None:  # pragma: no cover - registry membership checked above
-        return CallToolResult(
-            content=_err(
+        return _result(
+            _err(
                 "UNKNOWN_TOOL",
                 f"Tool '{name}' not found.",
                 hint=f"Available tools: {', '.join(sorted(_TOOL_REGISTRY))}",
-            )
+            ),
+            is_error=True,
         )
 
     try:
         parsed = model.model_validate(arguments)
     except ValidationError as exc:
         logger.warning("Bad arguments for tool %s: %s", name, exc)
-        return CallToolResult(
-            content=_err(
+        return _result(
+            _err(
                 "INPUT_ERROR",
                 f"Invalid arguments for '{name}'.",
                 hint=_format_validation_error(exc),
-            )
+            ),
+            is_error=True,
         )
 
     # exclude_unset keeps the tool functions authoritative for their own
@@ -192,26 +206,25 @@ async def _call_tool(
         # a blocking network call. Running it inline would stall the whole
         # asyncio event loop and freeze the transport.
         result = await asyncio.to_thread(func, **kwargs)
-        return CallToolResult(content=_ok(result))
+        return _result(_ok(result))
 
     except AstroError as exc:
         logger.warning("%s in tool %s: %s", exc.code, name, exc)
-        return CallToolResult(
-            content=[TextContent(type="text", text=to_compact_json(exc.to_payload()))]
+        return _result(
+            [TextContent(type="text", text=to_compact_json(exc.to_payload()))],
+            is_error=True,
         )
-    except ValueError as exc:
-        logger.warning("ValueError in tool %s: %s", name, exc)
-        return CallToolResult(content=_err("INPUT_ERROR", str(exc)))
     except Exception:
         # Log the full traceback server-side, but never echo internal
         # details (paths, library internals) back to the model.
         logger.exception("Unexpected error in tool %s", name)
-        return CallToolResult(
-            content=_err(
+        return _result(
+            _err(
                 "INTERNAL_ERROR",
                 "An internal error occurred while computing this chart.",
                 hint="Check the server logs for details.",
-            )
+            ),
+            is_error=True,
         )
 
 
