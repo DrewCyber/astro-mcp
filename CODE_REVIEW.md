@@ -15,7 +15,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [ ] R07 Aspect occurrence grouping: distinguish branches and actual retrograde loops; avoid out-of-coverage auxiliary reads; include exact scan samples.
 - [x] R08 Profections: activated rulers follow profected signs rather than quadrant cusps.
 - [x] R09 Progressions: reported progressed instant derives from computed Julian day.
-- [ ] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
+- [x] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
 - [ ] R11 Synastry: nonnegative compatibility weights with custom orbs.
 - [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
 - [x] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R10 — Davison midpoint houses
+
+Two births at 60°N and ±80° longitude reproduce a Placidus failure at their 84.27°N midpoint. The requested house system is now resolved at that midpoint, preserving the existing whole-sign fallback policy and reporting its warning. Eight focused tests pass; full gates: 371 tests, 91.42% coverage, Ruff and strict mypy clean.
 
 ### R09 — progressed instant
 
