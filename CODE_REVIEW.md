@@ -20,9 +20,9 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
 - [x] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
 - [x] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
-- [ ] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
+- [x] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
 - [ ] R16 HTTP: configured Host/Origin validation and bounded admission; assess quotas/auth without silently changing public access contract.
-- [ ] R17 Orb schemas: recognized keys and bounded finite values.
+- [x] R17 Orb schemas: recognized keys and bounded finite values.
 - [ ] R18 Ephemeris downloads: pinned source, checksums, atomic downloads, validation of existing files.
 - [ ] R19 Ephemeris initialization/thread policy and sunrise error/fallback handling: validate reported risks, enforce consistent initialization.
 - [x] R20 Preserve fractional seconds in Julian-day conversion.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R15 / R17 — release gating and orb validation
+
+Release publication now depends on the complete test matrix. CI and Docker use the frozen uv lock; CI keeps development extras across commands. Orb overrides reject unknown aspect names, nonfinite values and values outside 0–15 degrees. Six regression cases pass; full gates: 368 tests, 91.41% coverage, Ruff and strict mypy clean. `uv lock --check` and frozen development/runtime dry-runs pass. Container build and hosted smoke test have not been run locally.
 
 ### R14 — dispatcher errors
 

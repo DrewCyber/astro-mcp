@@ -19,6 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field
 HouseSystem = Literal["P", "W", "K"]
 DegreeFormat = Literal["dms", "dec"]
 AspectCode = Literal["Cnj", "Opp", "Tri", "Squ", "Sex", "SSq", "Ses"]
+# Same 0–15 degree range as max_orb; zero permits exact-only contacts.
+OrbDegrees = Annotated[float, Field(ge=0.0, le=15.0, allow_inf_nan=False)]
+OrbMap = dict[AspectCode, OrbDegrees]
 StepCode = Literal["1h", "2h", "3h", "6h", "12h", "1d", "7d", "30d"]
 Technique = Literal["transits", "progressions", "profections"]
 MoonEventsMode = Literal["all", "phases_void", "none"]
@@ -134,8 +137,12 @@ class TransitsInput(_BirthData):
         le=366,
         description="Scan this many days starting at transit_date",
     )
-    orbs: dict[str, float] | None = Field(
-        default=None, description="Per-aspect orb overrides in degrees, e.g. {'Cnj': 8}"
+    orbs: OrbMap | None = Field(
+        default=None,
+        description=(
+            "Per-aspect orb overrides in degrees (0-15), keyed by aspect code, "
+            "e.g. {\"Cnj\": 8}. Unknown keys are rejected."
+        ),
     )
     fast_planets_only: bool = Field(
         default=False, description="Restrict to Moon, Mercury, Venus, Sun and Mars"
@@ -274,8 +281,12 @@ class SynastryInput(_TwoPeople):
     """
 
     house_system: HouseSystem = "P"
-    orbs: dict[str, float] | None = Field(
-        default=None, description="Per-aspect orb overrides in degrees"
+    orbs: OrbMap | None = Field(
+        default=None,
+        description=(
+            "Per-aspect orb overrides in degrees (0-15), keyed by aspect code. "
+            "Unknown keys are rejected."
+        ),
     )
     degree_format: DegreeFormat = "dec"
     min_significance: float | None = Field(default=None, ge=0.0, le=1.0, description=_SIG_DESC)

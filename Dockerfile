@@ -15,10 +15,13 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install the package; README.md is referenced by pyproject.toml metadata.
-COPY pyproject.toml README.md ./
+# Use the same installer and frozen runtime dependency graph as CI.
+COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /usr/local/bin/uv
+# README.md is referenced by pyproject.toml metadata.
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir .
+RUN uv sync --frozen --no-dev --no-editable --no-cache
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Swiss Ephemeris data (~2 MB, 1800-2400). Downloaded at build time; the
 # files are gitignored in the repo, so COPY cannot be used.
