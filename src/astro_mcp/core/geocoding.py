@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import math
 import threading
 import time
 import unicodedata
@@ -50,6 +51,10 @@ def _make_geocoder() -> Any:
         Nominatim(user_agent=settings.geocoding_user_agent).geocode,
         min_delay_seconds=1.0,
         max_retries=0,
+        # Never convert a provider failure into a silent ``None`` result: with
+        # the default ``swallow_exceptions=True`` a Nominatim outage looked
+        # like "city not found" instead of "service unavailable".
+        swallow_exceptions=False,
     )
 
 
@@ -76,6 +81,38 @@ def _cache_path() -> Path | None:
     return Path(raw).expanduser()
 
 
+def _is_valid_tz(tz: Any) -> bool:
+    if not isinstance(tz, str):
+        return False
+    try:
+        ZoneInfo(tz)
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
+def _valid_entry(key: str, entry: Any) -> bool:
+    """A persisted entry must carry sane geography before it is trusted.
+
+    A tampered, hand-edited, or older-format cache file must not inject a
+    latitude of 1e18 or a bogus timezone into every later chart.
+    """
+    if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+        return False
+    if any(type(entry.get(field)) not in (int, float) for field in ("lat", "lon")):
+        return False
+    try:
+        lat = float(entry["lat"])
+        lon = float(entry["lon"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not (math.isfinite(lat) and -90.0 <= lat <= 90.0):
+        return False
+    if not (math.isfinite(lon) and -180.0 <= lon <= 180.0):
+        return False
+    return _is_valid_tz(entry.get("tz"))
+
+
 def _load_disk_cache() -> dict[str, dict[str, Any]]:
     global _disk_cache
     if _disk_cache is not None:
@@ -96,7 +133,7 @@ def _load_disk_cache() -> dict[str, dict[str, Any]]:
 def _cache_get(key: str) -> GeoLocation | None:
     with _cache_lock:
         entry = _load_disk_cache().get(key)
-    if entry is None:
+    if entry is None or not _valid_entry(key, entry):
         return None
     try:
         return GeoLocation(**entry)
