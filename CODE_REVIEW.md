@@ -25,7 +25,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [ ] R17 Orb schemas: recognized keys and bounded finite values.
 - [ ] R18 Ephemeris downloads: pinned source, checksums, atomic downloads, validation of existing files.
 - [ ] R19 Ephemeris initialization/thread policy and sunrise error/fallback handling: validate reported risks, enforce consistent initialization.
-- [ ] R20 Preserve fractional seconds in Julian-day conversion.
+- [x] R20 Preserve fractional seconds in Julian-day conversion.
 - [ ] R21 Reduce repeated lunar and rectification computations without changing results.
 - [ ] R22 Broaden regression/HTTP tests; raise coverage floor if achieved coverage permits.
 

@@ -184,7 +184,8 @@ def to_jd(dt_utc: str) -> float:
             hint="Convert to UTC first (suffix 'Z' or '+00:00').",
         )
     return float(swe.julday(dt.year, dt.month, dt.day,
-                            dt.hour + dt.minute / 60 + dt.second / 3600))
+                            dt.hour + dt.minute / 60
+                            + (dt.second + dt.microsecond / 1_000_000) / 3600))
 
 
 def jd_to_iso(jd: float) -> str:
