@@ -26,7 +26,7 @@ INITIALIZE_PAYLOAD = {
 def client():
     # Entering the context manager runs the lifespan, which starts the
     # StreamableHTTPSessionManager — exactly what uvicorn does in production.
-    with TestClient(create_asgi_app()) as test_client:
+    with TestClient(create_asgi_app(), base_url="http://localhost:8080") as test_client:
         yield test_client
 
 
