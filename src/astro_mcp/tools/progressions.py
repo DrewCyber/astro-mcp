@@ -19,6 +19,34 @@ from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart, rank_aspec
 from astro_mcp.tools.natal import compute_natal, dedupe_aspects
 
 
+def compute_progressed_points(
+    chart: NatalChart, birth_date: str, progression_date: str,
+) -> tuple[float, float, dict[str, ChartPoint], dict[str, ChartPoint]]:
+    # Age is measured from the *local* birth date the caller supplied; the UTC
+    # timestamp can land on the neighbouring day for births near midnight.
+    try:
+        b_date = Date.fromisoformat(birth_date)
+        p_date = Date.fromisoformat(progression_date)
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_DATE", "birth_date and progression_date must be YYYY-MM-DD."
+        ) from exc
+
+    age_days = (p_date - b_date).days
+    age_years = age_days / 365.25
+
+    # Day-for-a-year: advance the ephemeris one day per year of life.
+    prog_jd = chart.jd + age_years
+
+    cusps, ascmc = calc_houses(
+        prog_jd, chart.geo.lat, chart.geo.lon, chart.house_system
+    )
+    prog_planets = calc_all_planets(prog_jd, cusps, include_asteroids=False)
+    prog_angles = build_angles(ascmc, cusps)
+
+    return prog_jd, age_years, prog_planets, prog_angles
+
+
 def calculate_secondary_progressions(
     birth_date: str | None = None,
     birth_time: str | None = None,
@@ -61,28 +89,10 @@ def calculate_secondary_progressions(
             "INPUT_ERROR", "birth_date is required to measure the progression age."
         )
 
-    # Age is measured from the *local* birth date the caller supplied; the UTC
-    # timestamp can land on the neighbouring day for births near midnight.
-    try:
-        b_date = Date.fromisoformat(birth_date)
-        p_date = Date.fromisoformat(progression_date)
-    except ValueError as exc:
-        raise AstroError(
-            "INVALID_DATE", "birth_date and progression_date must be YYYY-MM-DD."
-        ) from exc
-
-    age_days = (p_date - b_date).days
-    age_years = age_days / 365.25
-
-    # Day-for-a-year: advance the ephemeris one day per year of life.
-    prog_jd = chart.jd + age_years
-    prog_datetime_utc = jd_to_iso(prog_jd)
-
-    cusps, ascmc = calc_houses(
-        prog_jd, chart.geo.lat, chart.geo.lon, chart.house_system
+    prog_jd, age_years, prog_planets, prog_angles = compute_progressed_points(
+        chart, birth_date, progression_date
     )
-    prog_planets = calc_all_planets(prog_jd, cusps, include_asteroids=False)
-    prog_angles = build_angles(ascmc, cusps)
+    prog_datetime_utc = jd_to_iso(prog_jd)
 
     natal_points = chart.all_points
 

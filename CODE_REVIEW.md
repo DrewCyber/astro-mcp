@@ -17,7 +17,7 @@ Check an item only after regression tests and the full pytest, Ruff, and strict 
 - [x] R09 Progressions: reported progressed instant derives from computed Julian day.
 - [x] R10 Davison: resolve house system at midpoint latitude, not first birthplace.
 - [x] R11 Synastry: nonnegative compatibility weights with custom orbs.
-- [ ] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
+- [x] R12 Rectification: internal progression results rather than wire form; remove synthetic sign-cusp scoring inconsistent with angles/Moon contract.
 - [x] R13 Sect helper: require explicit solar-altitude sect; remove house-based fallback.
 - [x] R14 Dispatcher: MCP error envelope and sanitized unexpected ValueError/serialization failures.
 - [x] R15 CI: release image publication depends on quality gates; frozen dependency installs in CI and Docker.
@@ -44,6 +44,10 @@ Baseline review: 326 tests passed, 90.26% statement coverage; Ruff and strict my
 ## Completed fixes
 
 Git history supplies commit hashes.
+
+### R12 — rectification internal computations
+
+Extracted shared progressed-point computation and removed rectification's call to the serialized public tool. Removed synthetic profected sign-cusp scoring; the transiting year lord is scored against actual natal angles/Moon. Progression-only calls no longer construct unused event transit charts. Regressions forbid those public/unused paths and enforce the target set. Full gates: 390 tests, 91.54% coverage, Ruff and strict mypy clean.
 
 ### R03 — internal precision and chart serialization
 
