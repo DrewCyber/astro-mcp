@@ -39,10 +39,12 @@ def test_calc_planet_in_worker_thread_uses_configured_ephe_path(tmp_path, monkey
 def test_ensure_ephe_path_is_idempotent_per_thread():
     from astro_mcp.core import ephemeris_provider as ep
 
-    # Calling twice in the same thread must not re-apply (TLS flag set).
+    # Calling twice in the same thread must not re-apply after the thread has
+    # caught up with the active configuration generation.
     ep._ensure_ephe_path()
-    assert getattr(ep._tls, "ephe_applied", False)
+    assert getattr(ep._tls, "ephe_generation", None) == ep._EPHE_GENERATION
     ep._ensure_ephe_path()  # no error, no state change
+    assert getattr(ep._tls, "ephe_generation", None) == ep._EPHE_GENERATION
 
 
 def test_ephe_directory_contents_match_expected_files():

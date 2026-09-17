@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 # tell "date outside coverage" apart from "files missing" — the two are
 # indistinguishable in swisseph's own error output but need opposite fixes.
 _COVERED_YEARS: tuple[int, int] | None = None
+_ACTIVE_EPHE_PATH = settings.ephe_path
+_EPHE_GENERATION = 0
 
 
 def _detect_covered_years(path: str) -> tuple[int, int] | None:
@@ -50,7 +52,7 @@ def ephemeris_covered_years() -> tuple[int, int] | None:
     """Covered year span of the installed data files, or None if undetected."""
     global _COVERED_YEARS
     if _COVERED_YEARS is None:
-        _COVERED_YEARS = _detect_covered_years(settings.ephe_path)
+        _COVERED_YEARS = _detect_covered_years(_ACTIVE_EPHE_PATH)
     return _COVERED_YEARS
 
 # Flags requested for every body.  FLG_SWIEPH selects the high-precision
@@ -75,9 +77,9 @@ def _ensure_ephe_path() -> None:
     falls back to the Moshier ephemeris.  Re-applying per thread is idempotent
     and cheap (skipped after the first call in each thread).
     """
-    if not getattr(_tls, "ephe_applied", False):
-        swe.set_ephe_path(settings.ephe_path)
-        _tls.ephe_applied = True
+    if getattr(_tls, "ephe_generation", None) != _EPHE_GENERATION:
+        swe.set_ephe_path(_ACTIVE_EPHE_PATH)
+        _tls.ephe_generation = _EPHE_GENERATION
 
 
 def pid_for(key: str) -> int:
@@ -102,7 +104,8 @@ def init_ephemeris(ephe_path: str | None = None) -> None:
     which is materially less accurate.  Detecting that at startup is far better
     than emitting subtly wrong charts for the lifetime of the process.
     """
-    path = ephe_path or settings.ephe_path
+    # Reconfiguration is a startup/quiescent operation, not concurrent with calculations.
+    path = str(Path(ephe_path or settings.ephe_path).expanduser().resolve())
 
     # Validate *before* touching Swiss Ephemeris' global state, so a failed
     # init cannot leave the process pointed at a directory with no data.
@@ -115,9 +118,11 @@ def init_ephemeris(ephe_path: str | None = None) -> None:
                   "scripts/download_ephe.sh to fetch them."),
         )
 
+    global _COVERED_YEARS, _ACTIVE_EPHE_PATH, _EPHE_GENERATION
     swe.set_ephe_path(path)
-    _tls.ephe_applied = True
-    global _COVERED_YEARS
+    _ACTIVE_EPHE_PATH = path
+    _EPHE_GENERATION += 1
+    _tls.ephe_generation = _EPHE_GENERATION
     _COVERED_YEARS = _detect_covered_years(path)
     logger.info("Swiss Ephemeris initialised from %s", path)
 
@@ -159,7 +164,7 @@ def _check_calc_flags(retflag: int, planet_id: int, jd: float) -> None:
             "EPHEMERIS_UNAVAILABLE",
             (f"Swiss Ephemeris fell back to the low-precision Moshier ephemeris "
              f"for body {planet_id}; the .se1 data files are missing."),
-            hint=(f"Expected data files in '{settings.ephe_path}'. "
+            hint=(f"Expected data files in '{_ACTIVE_EPHE_PATH}'. "
                   "Run scripts/download_ephe.sh or set EPHE_PATH."),
         )
 
@@ -565,10 +570,20 @@ def calc_rise_set(jd: float, lat: float, lon: float) -> tuple[float, float]:
     swisseph signals it with a ``-2`` return flag alongside an all-zero result
     array.  Ignoring the flag yields planetary hours derived from JD 0.
     """
-    _ensure_ephe_path()
-    rise_flag, rise_result = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, (lon, lat, 0))
-    set_flag, set_result = swe.rise_trans(jd, swe.SUN, swe.CALC_SET, (lon, lat, 0))
-    if rise_flag < 0 or set_flag < 0:
+    # rise_trans exposes event status, not the ephemeris flags it actually used.
+    calc_planet(jd, swe.SUN)
+    try:
+        rise_flag, rise_result = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, (lon, lat, 0))
+        set_flag, set_result = swe.rise_trans(jd, swe.SUN, swe.CALC_SET, (lon, lat, 0))
+    except swe.Error as exc:
+        message = str(exc)
+        code = ("EPHEMERIS_OUT_OF_RANGE"
+                if "restricted to" in message or "outside" in message
+                else "EPHEMERIS_UNAVAILABLE")
+        raise AstroError(code, "Swiss Ephemeris could not compute sunrise/sunset.") from exc
+    if any(flag < 0 and flag != -2 for flag in (rise_flag, set_flag)):
+        raise AstroError("EPHEMERIS_UNAVAILABLE", "Swiss Ephemeris rise/set calculation failed.")
+    if rise_flag == -2 or set_flag == -2:
         raise AstroError(
             "NO_RISE_SET",
             (f"The Sun does not both rise and set at latitude {lat} on this date "
