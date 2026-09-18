@@ -9,7 +9,7 @@ services:
     name: astro-mcp
     runtime: image
     image:
-      url: ghcr.io/drewcyber/astro-mcp:1.2.0
+      url: ghcr.io/drewcyber/astro-mcp:latest
     plan: free
     healthCheckPath: /health
     autoDeploy: true
