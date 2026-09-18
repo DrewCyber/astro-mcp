@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date as Date
-from datetime import timedelta
 from typing import Any
 
 from astro_mcp.core.ephemeris_provider import (
@@ -11,12 +10,41 @@ from astro_mcp.core.ephemeris_provider import (
     calc_all_planets,
     calc_houses,
     find_aspects,
+    jd_to_iso,
     lon_to_sign_info,
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
 from astro_mcp.core.models import ANGLE_KEYS, ChartPoint, NatalChart, rank_aspects
 from astro_mcp.tools.natal import compute_natal, dedupe_aspects
+
+
+def compute_progressed_points(
+    chart: NatalChart, birth_date: str, progression_date: str,
+) -> tuple[float, float, dict[str, ChartPoint], dict[str, ChartPoint]]:
+    # Age is measured from the *local* birth date the caller supplied; the UTC
+    # timestamp can land on the neighbouring day for births near midnight.
+    try:
+        b_date = Date.fromisoformat(birth_date)
+        p_date = Date.fromisoformat(progression_date)
+    except ValueError as exc:
+        raise AstroError(
+            "INVALID_DATE", "birth_date and progression_date must be YYYY-MM-DD."
+        ) from exc
+
+    age_days = (p_date - b_date).days
+    age_years = age_days / 365.25
+
+    # Day-for-a-year: advance the ephemeris one day per year of life.
+    prog_jd = chart.jd + age_years
+
+    cusps, ascmc = calc_houses(
+        prog_jd, chart.geo.lat, chart.geo.lon, chart.house_system
+    )
+    prog_planets = calc_all_planets(prog_jd, cusps, include_asteroids=False)
+    prog_angles = build_angles(ascmc, cusps)
+
+    return prog_jd, age_years, prog_planets, prog_angles
 
 
 def calculate_secondary_progressions(
@@ -61,34 +89,17 @@ def calculate_secondary_progressions(
             "INPUT_ERROR", "birth_date is required to measure the progression age."
         )
 
-    # Age is measured from the *local* birth date the caller supplied; the UTC
-    # timestamp can land on the neighbouring day for births near midnight.
-    try:
-        b_date = Date.fromisoformat(birth_date)
-        p_date = Date.fromisoformat(progression_date)
-    except ValueError as exc:
-        raise AstroError(
-            "INVALID_DATE", "birth_date and progression_date must be YYYY-MM-DD."
-        ) from exc
-
-    age_days = (p_date - b_date).days
-    age_years = age_days / 365.25
-
-    # Day-for-a-year: advance the ephemeris one day per year of life.
-    prog_jd = chart.jd + age_years
-    prog_day_str = (b_date + timedelta(days=age_years)).isoformat()
-
-    cusps, ascmc = calc_houses(
-        prog_jd, chart.geo.lat, chart.geo.lon, chart.house_system
+    prog_jd, age_years, prog_planets, prog_angles = compute_progressed_points(
+        chart, birth_date, progression_date
     )
-    prog_planets = calc_all_planets(prog_jd, cusps, include_asteroids=False)
-    prog_angles = build_angles(ascmc, cusps)
+    prog_datetime_utc = jd_to_iso(prog_jd)
 
     natal_points = chart.all_points
 
     # Prog -> Natal aspects
     prog_all: dict[str, ChartPoint] = {**prog_planets, **prog_angles}
-    p2n = find_aspects(prog_all, natal_points, angle_orb_keys=set(ANGLE_KEYS))
+    p2n = find_aspects(prog_all, natal_points, angle_orb_keys=set(ANGLE_KEYS),
+                       cross_chart=True, fixed_target=True)
 
     # Prog -> Prog aspects
     p2p = dedupe_aspects(find_aspects(prog_planets, prog_planets, angle_orb_keys=set()))
@@ -105,7 +116,8 @@ def calculate_secondary_progressions(
     result: dict[str, Any] = {
         "prog_date": progression_date,
         "prog_age": round(age_years, 2),
-        "prog_day": prog_day_str,
+        "prog_day": prog_datetime_utc[:10],
+        "prog_datetime_utc": prog_datetime_utc,
         # The progressed angles are the QUOTIDIAN angles of the progressed
         # day: houses cast for prog_jd at the birth place, so they advance
         # ~360+1 deg per year of life. This is a recognised convention but
@@ -115,12 +127,12 @@ def calculate_secondary_progressions(
         "angles_method": "quotidian",
         "prog_planets": prog_planets_out,
         "prog_to_natal_aspects": [
-            {"pp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"pp": a.point1, "np": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "apply": a.applying, "sig": a.significance}
             for a in rank_aspects(p2n_in_orb, min_significance, top_n)
         ],
         "prog_to_prog_aspects": [
-            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "sig": a.significance}
             for a in rank_aspects(p2p_in_orb, min_significance, top_n)
         ],

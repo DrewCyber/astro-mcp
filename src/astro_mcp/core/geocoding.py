@@ -5,6 +5,9 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import math
+import sqlite3
+import tempfile
 import threading
 import time
 import unicodedata
@@ -50,6 +53,10 @@ def _make_geocoder() -> Any:
         Nominatim(user_agent=settings.geocoding_user_agent).geocode,
         min_delay_seconds=1.0,
         max_retries=0,
+        # Never convert a provider failure into a silent ``None`` result: with
+        # the default ``swallow_exceptions=True`` a Nominatim outage looked
+        # like "city not found" instead of "service unavailable".
+        swallow_exceptions=False,
     )
 
 
@@ -76,6 +83,38 @@ def _cache_path() -> Path | None:
     return Path(raw).expanduser()
 
 
+def _is_valid_tz(tz: Any) -> bool:
+    if not isinstance(tz, str):
+        return False
+    try:
+        ZoneInfo(tz)
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
+def _valid_entry(key: str, entry: Any) -> bool:
+    """A persisted entry must carry sane geography before it is trusted.
+
+    A tampered, hand-edited, or older-format cache file must not inject a
+    latitude of 1e18 or a bogus timezone into every later chart.
+    """
+    if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+        return False
+    if any(type(entry.get(field)) not in (int, float) for field in ("lat", "lon")):
+        return False
+    try:
+        lat = float(entry["lat"])
+        lon = float(entry["lon"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not (math.isfinite(lat) and -90.0 <= lat <= 90.0):
+        return False
+    if not (math.isfinite(lon) and -180.0 <= lon <= 180.0):
+        return False
+    return _is_valid_tz(entry.get("tz"))
+
+
 def _load_disk_cache() -> dict[str, dict[str, Any]]:
     global _disk_cache
     if _disk_cache is not None:
@@ -96,7 +135,7 @@ def _load_disk_cache() -> dict[str, dict[str, Any]]:
 def _cache_get(key: str) -> GeoLocation | None:
     with _cache_lock:
         entry = _load_disk_cache().get(key)
-    if entry is None:
+    if entry is None or not _valid_entry(key, entry):
         return None
     try:
         return GeoLocation(**entry)
@@ -110,16 +149,40 @@ def _cache_put(key: str, geo: GeoLocation) -> None:
         return
     with _cache_lock:
         cache = _load_disk_cache()
-        cache[key] = {"lat": geo.lat, "lon": geo.lon, "tz": geo.tz, "name": geo.name}
+        entry = {"lat": geo.lat, "lon": geo.lon, "tz": geo.tz, "name": geo.name}
+        cache[key] = entry
+        temporary: Path | None = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            # Write-then-replace so an interrupted write cannot truncate the
-            # existing cache.
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text(json.dumps(cache), encoding="utf-8")
-            tmp.replace(path)
-        except OSError as exc:
+            # SQLite supplies a cross-process lock, including crash recovery,
+            # while the existing JSON cache format remains readable.
+            connection = sqlite3.connect(str(path) + ".lock.sqlite3", timeout=10)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                merged: dict[str, Any] = {}
+                if path.exists():
+                    try:
+                        loaded = json.loads(path.read_text(encoding="utf-8"))
+                        if isinstance(loaded, dict):
+                            merged = {k: v for k, v in loaded.items() if _valid_entry(k, v)}
+                    except ValueError:
+                        pass
+                merged.update(cache)
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=path.parent, delete=False,
+                ) as stream:
+                    temporary = Path(stream.name)
+                    json.dump(merged, stream)
+                temporary.replace(path)
+                cache.update(merged)
+                connection.commit()
+            finally:
+                connection.close()
+        except (OSError, sqlite3.Error) as exc:
             logger.warning("Could not write geocode cache to %s: %s", path, exc)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -133,24 +196,28 @@ def _cache_put(key: str, geo: GeoLocation) -> None:
 NEGATIVE_TTL_SECONDS = 300.0
 
 _negative_lock = threading.Lock()
-_negative_failures: dict[str, float] = {}
+NEGATIVE_CACHE_MAXSIZE = 1024
+_negative_failures: dict[str, tuple[float, str, str, str]] = {}
 
 
-def _negative_hit(key: str) -> bool:
+def _negative_hit(key: str) -> AstroError | None:
     now = time.monotonic()
     with _negative_lock:
-        failed_at = _negative_failures.get(key)
-        if failed_at is None:
-            return False
-        if now - failed_at >= NEGATIVE_TTL_SECONDS:
-            del _negative_failures[key]
-            return False
-        return True
+        expired = [name for name, value in _negative_failures.items()
+                   if now - value[0] >= NEGATIVE_TTL_SECONDS]
+        for name in expired:
+            del _negative_failures[name]
+        failure = _negative_failures.get(key)
+        if failure is None:
+            return None
+        return AstroError(failure[1], failure[2], hint=failure[3])
 
 
-def _negative_record(key: str) -> None:
+def _negative_record(key: str, error: AstroError) -> None:
     with _negative_lock:
-        _negative_failures[key] = time.monotonic()
+        if key not in _negative_failures and len(_negative_failures) >= NEGATIVE_CACHE_MAXSIZE:
+            del _negative_failures[next(iter(_negative_failures))]
+        _negative_failures[key] = (time.monotonic(), error.code, error.message, error.hint)
 
 
 def _ascii_fold(text: str) -> str:
@@ -193,12 +260,6 @@ def _geocode_lru(key: str) -> GeoLocation:
     cached = _cache_get(key)
     if cached is not None:
         return cached
-    if _negative_hit(key):
-        raise AstroError(
-            "GEOCODE_FAILED",
-            f"City '{key}' not found (recently looked up).",
-            hint="Correct the name, or pass explicit {lat, lon, tz} coordinates.",
-        )
     try:
         location = _geocoder(key, timeout=10)
     except GeocoderRateLimited as exc:
@@ -224,7 +285,6 @@ def _geocode_lru(key: str) -> GeoLocation:
         ) from exc
     if location is None:
         suggestions = _suggest_similar(key)
-        _negative_record(key)
         hint = "Provide the full city name (e.g. 'Ulm, Germany') or coordinates."
         if suggestions:
             hint = (
@@ -266,9 +326,14 @@ def geocode(city: str) -> GeoLocation:
     lookups are negatively-cached for :data:`NEGATIVE_TTL_SECONDS`.
     """
     key = normalize_place_key(city)
+    failure = _negative_hit(key)
     try:
+        if failure is not None:
+            raise failure
         return _geocode_lru(key)
     except AstroError as exc:
+        if failure is None:
+            _negative_record(key, exc)
         # Messages are built inside the LRU on the normalized key; the caller
         # should see the string they actually typed.
         if city != key and key in exc.message:

@@ -9,15 +9,54 @@ from __future__ import annotations
 
 import logging
 
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from astro_mcp.config import settings
 from astro_mcp.server import create_server
 
 logger = logging.getLogger(__name__)
+
+
+class BoundedConcurrencyMiddleware:
+    """Cap concurrently active ``/mcp`` requests; reject overflow with 503.
+
+    Admission never waits or reads the body. Slots cover the whole ASGI
+    exchange, including streaming responses, and are released on cancellation
+    or failure. Other paths (notably ``/health``) and lifespan bypass the cap.
+    The counter is local to this app's event loop, not shared across workers;
+    it does not prevent synchronous calculations from blocking that loop.
+    """
+
+    def __init__(self, app: ASGIApp, max_concurrent: int) -> None:
+        self.app = app
+        self.max_concurrent = max_concurrent
+        self._active = 0
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("path") not in ("/mcp", "/mcp/"):
+            await self.app(scope, receive, send)
+            return
+
+        # No await between check and increment: atomic within the serving loop.
+        if self._active >= self.max_concurrent:
+            response = PlainTextResponse(
+                "Too many concurrent requests; retry shortly.",
+                status_code=503,
+                headers={"Retry-After": "2"},
+            )
+            await response(scope, receive, send)
+            return
+
+        self._active += 1
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self._active -= 1
 
 
 async def health(_request: Request) -> JSONResponse:
@@ -33,17 +72,43 @@ def create_asgi_app() -> Starlette:
     affinity. ``json_response`` lets POST replies be plain JSON instead of an
     SSE stream, which some intermediaries relay more reliably.
 
-    ``host="0.0.0.0"`` only disables the SDK's localhost DNS-rebinding guard —
-    that guard would reject tunnelled traffic (cloudflared) arriving with a
-    foreign ``Host`` header. Actual binding is uvicorn's job (``HOST``/``PORT``).
+    Passing ``host=settings.host`` keeps the SDK's automatic DNS-rebinding
+    guard for loopback bindings (loopback Host/Origin values with explicit
+    ports are accepted), while a public deployment binding
+    ``0.0.0.0`` disables the automatic guard — that guard would otherwise
+    reject tunnelled traffic (cloudflared) arriving with a foreign ``Host``
+    header. Public deployments should then set ``HTTP_ALLOWED_HOSTS`` /
+    ``HTTP_ALLOWED_ORIGINS`` to restore explicit header validation through the
+    SDK's ``TransportSecuritySettings``.
+
+    A concurrency middleware bounds the number of simultaneously active
+    ``/mcp`` requests; overflow is rejected with 503 (see
+    ``BoundedConcurrencyMiddleware``). Actual binding is still uvicorn's job
+    (``HOST``/``PORT``).
     """
     server = create_server()
-    return server.streamable_http_app(
+    transport_security: TransportSecuritySettings | None = None
+    if settings.http_allowed_hosts is not None or settings.http_allowed_origins is not None:
+        # Explicit public allowlist: delegate Host/Origin validation to the SDK
+        # middleware regardless of the bind address. Patterns support
+        # ``host:*`` / ``scheme://host:*`` suffixes like the SDK's localhost
+        # guard. No auth is introduced — this only hardens header validation.
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=settings.http_allowed_hosts or [],
+            allowed_origins=settings.http_allowed_origins or [],
+        )
+    app = server.streamable_http_app(
         stateless_http=True,
         json_response=True,
-        host="0.0.0.0",
+        host=settings.host,
+        transport_security=transport_security,
         custom_starlette_routes=[Route("/health", health, methods=["GET"])],
     )
+    app.add_middleware(
+        BoundedConcurrencyMiddleware, max_concurrent=settings.http_max_concurrent_requests
+    )
+    return app
 
 
 def run_http() -> None:

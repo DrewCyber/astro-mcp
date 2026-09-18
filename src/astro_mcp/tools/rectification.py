@@ -150,6 +150,7 @@ def _score_candidate(
             raw_asps = find_aspects(
                 tr_planets, natal_points,
                 angle_orb_keys=set(ANGLE_KEYS),
+                cross_chart=True, fixed_target=True,
             )
             for asp in raw_asps:
                 if asp.orb > MAX_ORB:
@@ -168,50 +169,18 @@ def _score_candidate(
 
         if "profections" in techniques and tr_planets is not None:
             age = completed_years(birth_date, event_date)
-            prof_sign_idx, prof_cusp_lon, lord = profection_for_age(
+            prof_sign_idx, _, lord = profection_for_age(
                 chart.angles["Asc"].lon_decimal, age
             )
             prof_sign = SIGNS[prof_sign_idx]
-
-            # Target set anchored on the candidate's Ascendant sign, so it
-            # moves with the birth time exactly as a profection does:
-            # - the profected house cusp (start of the profected sign);
-            # - the natal year lord, when that point is time-sensitive.
-            targets: dict[str, ChartPoint] = {
-                f"{prof_sign}_cusp": ChartPoint(
-                    prof_cusp_lon, prof_sign, 0.0, None, False, 0.0
-                ),
-            }
-            lord_pt = chart.planets.get(lord)
-            if lord_pt is not None and lord in TIME_SENSITIVE_POINTS:
-                targets[lord] = ChartPoint(
-                    lord_pt.lon_decimal, lord_pt.sign, lord_pt.sign_lon,
-                    None, lord_pt.retrograde, lord_pt.speed,
-                )
-
-            for asp in find_aspects(tr_planets, targets, angle_orb_keys=set(targets)):
-                if asp.orb > MAX_ORB:
-                    continue
-                corr_score = score_event_match(asp.orb, asp.aspect_type, "profections")
-                if corr_score > 1:
-                    correlations.append({
-                        "event_date": event_date,
-                        "event_type": event_type,
-                        "technique": "profections",
-                        "age_year_lord": lord,
-                        "profected_sign": prof_sign,
-                        "indicators": [{"planet": asp.point1, "asp": asp.aspect_type,
-                                        "point": asp.point2, "orb": round(asp.orb, 2)}],
-                        "score": round(corr_score, 2),
-                    })
-                    total_score += corr_score
 
             # The year lord's own transit condition describes its year: score
             # the transiting lord against the candidate's angles and Moon.
             tr_lord = tr_planets.get(lord)
             if tr_lord is not None:
                 for asp in find_aspects({lord: tr_lord}, natal_points,
-                                        angle_orb_keys=set(ANGLE_KEYS)):
+                                        angle_orb_keys=set(ANGLE_KEYS),
+                                        cross_chart=True, fixed_target=True):
                     if asp.orb > MAX_ORB:
                         continue
                     corr_score = score_event_match(asp.orb, asp.aspect_type, "profections")
@@ -229,29 +198,25 @@ def _score_candidate(
                         total_score += corr_score
 
         if "progressions" in techniques:
-            from astro_mcp.tools.progressions import calculate_secondary_progressions
-            prog = calculate_secondary_progressions(
-                progression_date=event_date,
-                degree_format="dec",
-                max_orb=MAX_ORB,
-                chart=chart,
-                birth_date=birth_date,
+            from astro_mcp.tools.progressions import compute_progressed_points
+            _, _, prog_planets, prog_angles = compute_progressed_points(
+                chart, birth_date, event_date
             )
-            for asp in prog.get("prog_to_natal_aspects", []):
-                # Serialized as pp/np (progression point / natal point); the
-                # previous p1/p2 reads always evaluated to None, silently
-                # disabling the whole progressions technique.
-                if asp.get("np") not in TIME_SENSITIVE_POINTS:
+            for asp in find_aspects(
+                {**prog_planets, **prog_angles}, natal_points,
+                angle_orb_keys=set(ANGLE_KEYS), cross_chart=True, fixed_target=True,
+            ):
+                if asp.orb > MAX_ORB:
                     continue
-                corr_score = score_event_match(asp["orb"], asp["asp"], "progressions")
+                corr_score = score_event_match(asp.orb, asp.aspect_type, "progressions")
                 if corr_score > 1:
                     total_score += corr_score
                     correlations.append({
                         "event_date": event_date,
                         "event_type": event_type,
                         "technique": "progressions",
-                        "indicators": [{"planet": asp.get("pp"), "asp": asp["asp"],
-                                        "point": asp.get("np"), "orb": round(asp["orb"], 2)}],
+                        "indicators": [{"planet": asp.point1, "asp": asp.aspect_type,
+                                        "point": asp.point2, "orb": round(asp.orb, 2)}],
                         "score": round(corr_score, 2),
                     })
 
@@ -300,7 +265,8 @@ def calculate_rectification_hints(
     # --- Verification mode: score a single pre-known birth_time ---
     if birth_time:
         chart = compute_natal(birth_date, birth_time, birth_location, house_system)
-        transit_charts = _transit_charts_for_events(events, geo, house_system)
+        transit_charts = (_transit_charts_for_events(events, geo, house_system)
+                          if set(techniques) & {"transits", "profections"} else {})
         score, correlations = _score_candidate(
             chart, birth_date, events, techniques, transit_charts
         )
@@ -353,7 +319,8 @@ def calculate_rectification_hints(
         t += timedelta(minutes=time_step_min)
 
     # Transit charts depend only on the event dates: build them once.
-    transit_charts = _transit_charts_for_events(events, geo, house_system)
+    transit_charts = (_transit_charts_for_events(events, geo, house_system)
+                          if set(techniques) & {"transits", "profections"} else {})
 
     scored: list[dict[str, Any]] = []
     scores: list[float] = []

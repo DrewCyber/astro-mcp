@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from astro_mcp.core.ephemeris_provider import angular_distance, calc_all_planets, to_jd
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_point
-from astro_mcp.core.models import SIGNS, ChartPoint, HouseCusp
+from astro_mcp.core.models import ASPECT_ANGLES, SIGNS, ChartPoint, HouseCusp
 from astro_mcp.tools.natal import compute_natal
 
 # ---------------------------------------------------------------------------
@@ -59,28 +60,22 @@ def _get_lon(
     raise KeyError(f"Unknown chart point: {code}")
 
 
-def compute_parts(
+def compute_part_points(
     planets: dict[str, ChartPoint],
     angles: dict[str, ChartPoint],
     houses: list[HouseCusp],
-    degree_format: str = "dec",
     parts: list[str] | None = None,
     *,
-    is_day: bool | None = None,
-) -> dict[str, Any]:
+    is_day: bool,
+) -> dict[str, ChartPoint]:
     """Compute Arabic parts from natal chart points.
 
     ``is_day`` selects the sect of each formula (diurnal vs nocturnal).  It
     must come from a single source of truth — ``NatalChart.is_day``, derived
-    from solar altitude.  When omitted it falls back to the Sun's house:
-    houses 7-12 lie above the horizon, so Sun there means a *day* chart.
+    from solar altitude.
     """
-    if is_day is None:
-        _su = planets.get("Su")
-        su_house = (_su.house or 1) if _su is not None else 1
-        is_day = su_house in (7, 8, 9, 10, 11, 12)
 
-    result: dict[str, Any] = {}
+    result: dict[str, ChartPoint] = {}
     requested = parts if parts and "all" not in parts else list(PART_FORMULAS.keys())
 
     for code in requested:
@@ -100,9 +95,25 @@ def compute_parts(
         sign = SIGNS[sign_idx]
         sign_lon = part_lon % 30
         pt = ChartPoint(part_lon, sign, sign_lon, None, False, 0.0)
-        result[code] = serialize_point(pt, degree_format, include_house=False)
+        result[code] = pt
 
     return result
+
+
+def compute_parts(
+    planets: dict[str, ChartPoint],
+    angles: dict[str, ChartPoint],
+    houses: list[HouseCusp],
+    degree_format: str = "dec",
+    parts: list[str] | None = None,
+    *,
+    is_day: bool,
+) -> dict[str, Any]:
+    points = compute_part_points(planets, angles, houses, parts, is_day=is_day)
+    return {
+        code: serialize_point(point, degree_format, include_house=False)
+        for code, point in points.items()
+    }
 
 
 def calculate_arabic_parts(
@@ -124,42 +135,27 @@ def calculate_arabic_parts(
 
     chart_type = "day" if chart.is_day else "night"
 
-    result_parts = compute_parts(
-        chart.planets,
-        chart.angles,
-        chart.houses,
-        degree_format,
-        parts,
-        is_day=chart.is_day,
+    result_parts = compute_part_points(
+        chart.planets, chart.angles, chart.houses, parts, is_day=chart.is_day,
     )
 
     out: dict[str, Any] = {
         "chart_type": chart_type,
-        "parts": result_parts,
+        "parts": {
+            code: serialize_point(point, degree_format, include_house=False)
+            for code, point in result_parts.items()
+        },
     }
 
     if include_transits_date:
-        from astro_mcp.core.ephemeris_provider import angular_distance
-        from astro_mcp.core.models import ASPECT_ANGLES
-        from astro_mcp.tools.transits import calculate_transits
-
-        tr = calculate_transits(
-            transit_date=include_transits_date,
-            birth_date=birth_date,
-            birth_time=birth_time,
-            birth_location=birth_location,
-            house_system=house_system,
-            degree_format=degree_format,
-            max_orb=5.0,
-        )
+        jd_transit = to_jd(f"{include_transits_date}T12:00:00Z")
+        tr_planets = calc_all_planets(jd_transit)
         transit_activations: dict[str, list[dict[str, Any]]] = {}
-        for part_code, part_data in result_parts.items():
-            part_lon = part_data.get("deg", 0.0)
+        for part_code, part_point in result_parts.items():
             activations: list[dict[str, Any]] = []
-            for tp_code, tp_data in tr.get("transit_planets", {}).items():
-                tp_lon = tp_data.get("deg", 0.0)
+            for tp_code, tp_point in tr_planets.items():
                 for asp_name, asp_angle in ASPECT_ANGLES.items():
-                    o = abs(angular_distance(tp_lon, part_lon) - asp_angle)
+                    o = abs(angular_distance(tp_point.lon_decimal, part_point.lon_decimal) - asp_angle)
                     if o <= 3.0:
                         activations.append({
                             "planet": tp_code,

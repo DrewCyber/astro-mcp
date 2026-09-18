@@ -14,6 +14,7 @@ from astro_mcp.core.ephemeris_provider import (
     find_aspects,
     house_of,
     jd_to_iso,
+    resolve_house_system,
 )
 from astro_mcp.core.errors import AstroError
 from astro_mcp.core.formatters import serialize_house, serialize_point
@@ -78,7 +79,8 @@ def calculate_synastry(
     used_orbs = orbs or default_syn_orbs
 
     cross_aspects = find_aspects(
-        pts1, pts2, custom_orbs=used_orbs, angle_orb_keys=set(ANGLE_KEYS)
+        pts1, pts2, custom_orbs=used_orbs, angle_orb_keys=set(ANGLE_KEYS),
+        cross_chart=True,
     )
 
     # Compatibility indicators describe the whole relationship, so they are
@@ -88,7 +90,7 @@ def calculate_synastry(
             "p1_planet": a.point1,
             "p2_planet": a.point2,
             "asp": a.aspect_type,
-            "orb": a.orb,
+            "orb": round(a.orb, 2),
             "harmony": a.aspect_type in HARMONY_ASPECTS,
             "sig": a.significance,
         }
@@ -116,13 +118,18 @@ def calculate_synastry(
     ]
 
     # Tightness-weighted totals: each aspect contributes (max_orb - orb), so a
-    # partile aspect counts for much more than one at the edge of orb.  These
-    # are relative indicators for comparing charts, not absolute percentages.
+    # partile aspect counts for much more than one at the edge of orb.  Custom
+    # orbs can allow an orb wider than that 8-degree default, so the weight is
+    # clamped at zero — an aspect at the edge of a wide custom orb must not
+    # subtract from the total.  These are relative indicators for comparing
+    # charts, not absolute percentages.
     harmony_score = round(
-        sum(8 - a.orb for a in cross_aspects if a.aspect_type in HARMONY_ASPECTS), 1
+        sum(max(0.0, 8 - a.orb) for a in cross_aspects
+            if a.aspect_type in HARMONY_ASPECTS), 1
     )
     tension_score = round(
-        sum(8 - a.orb for a in cross_aspects if a.aspect_type not in HARMONY_ASPECTS), 1
+        sum(max(0.0, 8 - a.orb) for a in cross_aspects
+            if a.aspect_type not in HARMONY_ASPECTS), 1
     )
 
     return {
@@ -208,6 +215,8 @@ def calculate_composite_chart(
     n2 = _resolve_natal(person2_date, person2_time, person2_location, house_system, "person2")
 
     davison_location: dict[str, Any] | None = None
+    house_basis = "equal-from-composite-Asc"
+    house_warning = None
     if method == "davison":
         # Davison: a real chart cast for the midpoint in time and space.
         # The space midpoint is the great-circle one; naive averaging of
@@ -218,7 +227,8 @@ def calculate_composite_chart(
         )
         naive_lon = ((n1.geo.lon + n2.geo.lon) / 2 + 180.0) % 360.0 - 180.0
         naive_lat = (n1.geo.lat + n2.geo.lat) / 2
-        cusps, ascmc = calc_houses(dav_jd, lat, lon, n1.house_system)
+        house_basis, house_warning = resolve_house_system(house_system, lat)
+        cusps, ascmc = calc_houses(dav_jd, lat, lon, house_basis)
         comp_planets = calc_all_planets(dav_jd, cusps, include_asteroids=False)
         comp_angles = build_angles(ascmc, cusps)
         comp_houses = build_house_cusps(cusps)
@@ -281,14 +291,15 @@ def calculate_composite_chart(
 
     return {
         "method": method,
-        "house_basis": "equal-from-composite-Asc" if method == "midpoint" else n1.house_system,
+        "house_basis": house_basis,
+        **({"house_system_warning": house_warning} if house_warning else {}),
         "davison_location": davison_location,
         "comp_planets": {k: serialize_point(v, degree_format) for k, v in comp_planets.items()},
         "comp_angles": {k: serialize_point(v, degree_format, include_house=False)
                         for k, v in comp_angles.items()},
         "comp_houses": [serialize_house(h, degree_format) for h in comp_houses],
         "comp_aspects": [
-            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": a.orb,
+            {"p1": a.point1, "p2": a.point2, "asp": a.aspect_type, "orb": round(a.orb, 2),
              "sig": a.significance}
             for a in comp_aspects
         ],

@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     transport: Literal["stdio", "http"] = Field(default="stdio", alias="ASTRO_MCP_TRANSPORT")
     host: str = Field(default="127.0.0.1", alias="HOST")
     port: int = Field(default=8080, ge=1, le=65535, alias="PORT")
+    http_allowed_hosts: list[str] | None = Field(default=None, alias="HTTP_ALLOWED_HOSTS")
+    http_allowed_origins: list[str] | None = Field(default=None, alias="HTTP_ALLOWED_ORIGINS")
+    http_max_concurrent_requests: int = Field(
+        default=16, ge=1, alias="HTTP_MAX_CONCURRENT_REQUESTS"
+    )
     ephe_path: str = Field(default="./ephe", alias="EPHE_PATH")
     geocoding_provider: str = Field(default="nominatim", alias="GEOCODING_PROVIDER")
     opencage_api_key: str = Field(default="", alias="OPENCAGE_API_KEY")

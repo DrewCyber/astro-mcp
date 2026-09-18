@@ -34,18 +34,7 @@ STEP_HOURS: dict[str, float] = {
     "30d": 30.0,
 }
 
-# A retrograde loop can carry a body back and forth across the same aspect at
-# most three times, and the whole sequence fits inside roughly half a year even
-# for the slowest pairings.
 TRIPLE_PASS_WINDOW_DAYS = 200
-
-# Two exact hits are only folded into one occurrence when their gap also fits
-# inside half the pair's synodic cycle: within half a cycle the bodies cannot
-# complete a full lap of each other, so hits that close together belong to one
-# loop, while hits further apart are independent events (successive lunations,
-# successive Mercury retrogrades, ...). Without this cap every Moon aspect in a
-# year-long window collapsed into a single fabricated "triple pass".
-SYNODIC_GROUP_FRACTION = 0.5
 
 # The Moon covers ~13 degrees a day, so it can pass clean through an aspect --
 # and back out of orb -- inside a single coarse scan step. Every other body is
@@ -71,48 +60,6 @@ def _end_of_day_jd(date_to: str) -> float:
 def _scan_step_days(moving: set[str]) -> float:
     """Scan resolution needed to avoid stepping over a perfection."""
     return FAST_SCAN_STEP_DAYS if moving & FAST_BODIES else DEFAULT_SCAN_STEP_DAYS
-
-
-def _mean_daily_motion(jd: float, pid: int) -> float:
-    """Average signed geocentric motion of a body over one year (deg/day).
-
-    Longitude wraps, so the year cannot be measured as one delta: it is
-    integrated from short arcs (5 days — under 180 degrees even for the Moon,
-    so each arc's wrapped increment is unambiguous). Sampling a full year lets
-    retrograde episodes cancel out, yielding the body's mean drift — exactly
-    what the synodic-period estimate needs.
-    """
-    step = 5.0
-    n = round(365.25 / step)
-    total = 0.0
-    jd_a = jd
-    for _ in range(n):
-        lon_a, _ = calc_planet(jd_a, pid)
-        jd_b = jd_a + step
-        lon_b, _ = calc_planet(jd_b, pid)
-        total += (((lon_b - lon_a + 180.0) % 360.0) - 180.0)
-        jd_a = jd_b
-    return total / (n * step)
-
-
-def _group_window_days(
-    jd_start: float,
-    pid1: int,
-    pid2: int | None,
-) -> float:
-    """Max gap between consecutive exact hits treated as ONE retrograde loop.
-
-    The 200-day window is only safe for slow pairs. For any faster pairing the
-    loop cap is tightened to ``SYNODIC_GROUP_FRACTION`` of the pair's synodic
-    cycle: hits closer than that cannot be separated by a complete lap, while
-    hits further apart are independent events.
-    """
-    rel_speed = abs(_mean_daily_motion(jd_start, pid1))
-    if pid2 is not None:
-        rel_speed = abs(rel_speed - _mean_daily_motion(jd_start, pid2))
-    if rel_speed < 1e-9:
-        return TRIPLE_PASS_WINDOW_DAYS
-    return min(TRIPLE_PASS_WINDOW_DAYS, SYNODIC_GROUP_FRACTION * 360.0 / rel_speed)
 
 
 def _resolve_step_days(step: str, interval_days: int | None, interval_hours: int | None) -> float:
@@ -349,34 +296,53 @@ def find_aspect_exact_dates(
             hint="Shorten the date range.",
         )
 
-    # --- Pass 1: locate every exact crossing in the range -------------------
-    crossings: list[tuple[float, bool]] = []   # (jd, retrograde_at_exactness)
-    prev_delta: float | None = None
-    jd = jd_start
-    # Scan one step beyond the end so a perfection sitting in the final partial
-    # interval is still bracketed; crossings past jd_end are discarded below.
-    scan_limit = jd_end + scan_step
-    while jd <= scan_limit:
-        lon1, lon2 = _lon_at(jd, pid1, pid2, natal_lon2)
-        delta = aspect_delta(lon1, lon2, asp_angle)
-        if prev_delta is not None and prev_delta * delta < 0 and abs(prev_delta - delta) < 270:
-            ex_jd = find_exact_aspect_jd(
-                pid1, pid2, asp_angle, jd - scan_step, jd, natal_lon2=natal_lon2
-            )
-            if ex_jd is not None and jd_start <= ex_jd <= jd_end:
-                _, speed1 = calc_planet(ex_jd, pid1)
-                crossings.append((ex_jd, speed1 < 0))
-        prev_delta = delta
-        jd += scan_step
-
-    # --- Pass 2: group crossings belonging to one retrograde loop -----------
-    group_window = _group_window_days(jd_start, pid1, pid2)
+    # Unwrapped directed separation distinguishes opposite branches and laps.
     groups: list[list[tuple[float, bool]]] = []
-    for crossing in crossings:
-        if groups and crossing[0] - groups[-1][-1][0] <= group_window:
-            groups[-1].append(crossing)
-        else:
-            groups.append([crossing])
+    previous_key: int | None = None
+    previous_direction = 0
+    previous_delta: float | None = None
+    previous_arc: float | None = None
+    previous_jd = jd_start
+    unwrapped = 0.0
+    jd = jd_start
+    independent = mode_resolved == "transit-to-transit" and bool(
+        moving & {"Mo", "Me", "Ve", "Su"}
+    )
+    while True:
+        lon1, lon2 = _lon_at(jd, pid1, pid2, natal_lon2)
+        arc = (lon1 - lon2) % 360
+        unwrapped += arc if previous_arc is None else ((arc - previous_arc + 180) % 360 - 180)
+        delta = aspect_delta(lon1, lon2, asp_angle)
+        ex_jd = None
+        if abs(delta) < 1e-9:
+            if previous_delta is None or abs(previous_delta) >= 1e-9:
+                ex_jd = jd
+        elif previous_delta is not None and previous_delta * delta < 0:
+            ex_jd = find_exact_aspect_jd(
+                pid1, pid2, asp_angle, previous_jd, jd, natal_lon2=natal_lon2
+            )
+        if ex_jd is not None and (not groups or ex_jd - groups[-1][-1][0] > 1 / 86400):
+            exact_lon1, speed1 = calc_planet(ex_jd, pid1)
+            if natal_lon2 is not None:
+                exact_lon2, speed2 = natal_lon2, 0.0
+            else:
+                assert pid2 is not None
+                exact_lon2, speed2 = calc_planet(ex_jd, pid2)
+            exact_arc = (exact_lon1 - exact_lon2) % 360
+            level = unwrapped + ((exact_arc - arc + 180) % 360 - 180)
+            key = round(level)
+            direction = 1 if speed1 > speed2 else -1 if speed1 < speed2 else 0
+            if (groups and not independent and key == previous_key
+                    and direction * previous_direction < 0
+                    and ex_jd - groups[-1][-1][0] <= TRIPLE_PASS_WINDOW_DAYS):
+                groups[-1].append((ex_jd, speed1 < 0))
+            else:
+                groups.append([(ex_jd, speed1 < 0)])
+            previous_key, previous_direction = key, direction
+        previous_delta, previous_arc, previous_jd = delta, arc, jd
+        if jd == jd_end:
+            break
+        jd = min(jd + scan_step, jd_end)
 
     occurrences: list[dict[str, Any]] = []
     for group in groups:
@@ -440,7 +406,8 @@ def _orb_window(
     """
     jd = ex_jd
     while (limit_jd - jd) * direction > 0:
-        nxt = jd + direction * step
+        nxt = (min(jd + step, limit_jd) if direction > 0
+               else max(jd - step, limit_jd))
         lon1, lon2 = _lon_at(nxt, pid1, pid2, natal_lon2)
         if abs(aspect_delta(lon1, lon2, asp_angle)) > orb:
             break

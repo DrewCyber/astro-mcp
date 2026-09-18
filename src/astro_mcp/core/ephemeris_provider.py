@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 # tell "date outside coverage" apart from "files missing" — the two are
 # indistinguishable in swisseph's own error output but need opposite fixes.
 _COVERED_YEARS: tuple[int, int] | None = None
+_ACTIVE_EPHE_PATH = settings.ephe_path
+_EPHE_GENERATION = 0
 
 
 def _detect_covered_years(path: str) -> tuple[int, int] | None:
@@ -50,7 +52,7 @@ def ephemeris_covered_years() -> tuple[int, int] | None:
     """Covered year span of the installed data files, or None if undetected."""
     global _COVERED_YEARS
     if _COVERED_YEARS is None:
-        _COVERED_YEARS = _detect_covered_years(settings.ephe_path)
+        _COVERED_YEARS = _detect_covered_years(_ACTIVE_EPHE_PATH)
     return _COVERED_YEARS
 
 # Flags requested for every body.  FLG_SWIEPH selects the high-precision
@@ -75,9 +77,9 @@ def _ensure_ephe_path() -> None:
     falls back to the Moshier ephemeris.  Re-applying per thread is idempotent
     and cheap (skipped after the first call in each thread).
     """
-    if not getattr(_tls, "ephe_applied", False):
-        swe.set_ephe_path(settings.ephe_path)
-        _tls.ephe_applied = True
+    if getattr(_tls, "ephe_generation", None) != _EPHE_GENERATION:
+        swe.set_ephe_path(_ACTIVE_EPHE_PATH)
+        _tls.ephe_generation = _EPHE_GENERATION
 
 
 def pid_for(key: str) -> int:
@@ -102,7 +104,8 @@ def init_ephemeris(ephe_path: str | None = None) -> None:
     which is materially less accurate.  Detecting that at startup is far better
     than emitting subtly wrong charts for the lifetime of the process.
     """
-    path = ephe_path or settings.ephe_path
+    # Reconfiguration is a startup/quiescent operation, not concurrent with calculations.
+    path = str(Path(ephe_path or settings.ephe_path).expanduser().resolve())
 
     # Validate *before* touching Swiss Ephemeris' global state, so a failed
     # init cannot leave the process pointed at a directory with no data.
@@ -115,9 +118,11 @@ def init_ephemeris(ephe_path: str | None = None) -> None:
                   "scripts/download_ephe.sh to fetch them."),
         )
 
+    global _COVERED_YEARS, _ACTIVE_EPHE_PATH, _EPHE_GENERATION
     swe.set_ephe_path(path)
-    _tls.ephe_applied = True
-    global _COVERED_YEARS
+    _ACTIVE_EPHE_PATH = path
+    _EPHE_GENERATION += 1
+    _tls.ephe_generation = _EPHE_GENERATION
     _COVERED_YEARS = _detect_covered_years(path)
     logger.info("Swiss Ephemeris initialised from %s", path)
 
@@ -159,7 +164,7 @@ def _check_calc_flags(retflag: int, planet_id: int, jd: float) -> None:
             "EPHEMERIS_UNAVAILABLE",
             (f"Swiss Ephemeris fell back to the low-precision Moshier ephemeris "
              f"for body {planet_id}; the .se1 data files are missing."),
-            hint=(f"Expected data files in '{settings.ephe_path}'. "
+            hint=(f"Expected data files in '{_ACTIVE_EPHE_PATH}'. "
                   "Run scripts/download_ephe.sh or set EPHE_PATH."),
         )
 
@@ -184,7 +189,8 @@ def to_jd(dt_utc: str) -> float:
             hint="Convert to UTC first (suffix 'Z' or '+00:00').",
         )
     return float(swe.julday(dt.year, dt.month, dt.day,
-                            dt.hour + dt.minute / 60 + dt.second / 3600))
+                            dt.hour + dt.minute / 60
+                            + (dt.second + dt.microsecond / 1_000_000) / 3600))
 
 
 def jd_to_iso(jd: float) -> str:
@@ -299,12 +305,12 @@ def build_chart_point(
     sign, sign_lon = lon_to_sign_info(longitude)
     h = house_of(longitude, cusps) if cusps else None
     return ChartPoint(
-        lon_decimal=round(longitude % 360, 6),
+        lon_decimal=longitude % 360,
         sign=sign,
-        sign_lon=round(sign_lon, 6),
+        sign_lon=sign_lon,
         house=h,
         retrograde=speed < 0,
-        speed=round(speed, 4),
+        speed=speed,
     )
 
 
@@ -428,11 +434,12 @@ def build_angles(ascmc: list[float], cusps: list[float]) -> dict[str, ChartPoint
 def build_house_cusps(cusps: list[float]) -> list[HouseCusp]:
     result = []
     for i, cusp_lon in enumerate(cusps):
+        cusp_lon = cusp_lon % 360
         sign, _ = lon_to_sign_info(cusp_lon)
         ruler, mod_ruler = RULERS[sign]
         result.append(HouseCusp(
             number=i + 1,
-            lon_decimal=round(cusp_lon % 360, 6),
+            lon_decimal=cusp_lon % 360,
             sign=sign,
             ruler=ruler,
             modern_ruler=mod_ruler,
@@ -510,15 +517,24 @@ def find_aspects(
     orb_factor: float | None = None,
     angle_orb_keys: set[str] | None = None,
     custom_orbs: dict[str, float] | None = None,
+    *,
+    cross_chart: bool = False,
+    fixed_target: bool = False,
 ) -> list[Aspect]:
-    """Find all aspects between two sets of chart points."""
+    """Find aspects, excluding same-key self contacts within a chart by default.
+
+    Set ``cross_chart`` for distinct charts, where Su-Su (etc.) is meaningful.
+    Set ``fixed_target`` when points_b are frozen natal positions: applying is
+    then determined by points_a's motion alone, not by the natal birth speeds.
+    Synastry retains the default relative-speed convention.
+    """
     angle_orb_keys = angle_orb_keys or set()
     if orb_factor is None:
         orb_factor = settings.default_orb_factor
     aspects = []
     for k1, p1 in points_a.items():
         for k2, p2 in points_b.items():
-            if k1 == k2:
+            if k1 == k2 and not cross_chart:
                 continue
             dist = angular_distance(p1.lon_decimal, p2.lon_decimal)
             for asp_code, asp_angle in ASPECT_ANGLES.items():
@@ -530,9 +546,12 @@ def find_aspects(
                     orb_limit = DEFAULT_ORBS.get(asp_code, 2.0) * orb_factor
                 orb = abs(dist - asp_angle)
                 if orb <= orb_limit:
-                    applying = is_applying(p1.lon_decimal, p1.speed, p2.lon_decimal, p2.speed, asp_angle)
+                    applying = is_applying(
+                        p1.lon_decimal, p1.speed, p2.lon_decimal,
+                        0.0 if fixed_target else p2.speed, asp_angle,
+                    )
                     aspects.append(Aspect(
-                        k1, k2, asp_code, round(orb, 2), applying,
+                        k1, k2, asp_code, orb, applying,
                         significance=aspect_significance(k1, k2, asp_code, orb, orb_limit),
                     ))
     aspects.sort(key=lambda a: (a.orb, -a.significance))
@@ -551,10 +570,20 @@ def calc_rise_set(jd: float, lat: float, lon: float) -> tuple[float, float]:
     swisseph signals it with a ``-2`` return flag alongside an all-zero result
     array.  Ignoring the flag yields planetary hours derived from JD 0.
     """
-    _ensure_ephe_path()
-    rise_flag, rise_result = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, (lon, lat, 0))
-    set_flag, set_result = swe.rise_trans(jd, swe.SUN, swe.CALC_SET, (lon, lat, 0))
-    if rise_flag < 0 or set_flag < 0:
+    # rise_trans exposes event status, not the ephemeris flags it actually used.
+    calc_planet(jd, swe.SUN)
+    try:
+        rise_flag, rise_result = swe.rise_trans(jd, swe.SUN, swe.CALC_RISE, (lon, lat, 0))
+        set_flag, set_result = swe.rise_trans(jd, swe.SUN, swe.CALC_SET, (lon, lat, 0))
+    except swe.Error as exc:
+        message = str(exc)
+        code = ("EPHEMERIS_OUT_OF_RANGE"
+                if "restricted to" in message or "outside" in message
+                else "EPHEMERIS_UNAVAILABLE")
+        raise AstroError(code, "Swiss Ephemeris could not compute sunrise/sunset.") from exc
+    if any(flag < 0 and flag != -2 for flag in (rise_flag, set_flag)):
+        raise AstroError("EPHEMERIS_UNAVAILABLE", "Swiss Ephemeris rise/set calculation failed.")
+    if rise_flag == -2 or set_flag == -2:
         raise AstroError(
             "NO_RISE_SET",
             (f"The Sun does not both rise and set at latitude {lat} on this date "
@@ -589,18 +618,36 @@ def find_exact_aspect_jd(
     d_start = diff_at(jd_start)
     d_end = diff_at(jd_end)
 
+    # Preserve exact endpoints, including a zero-width bracket.
+    if d_start == 0:
+        return jd_start
+    if d_end == 0:
+        return jd_end
     if d_start * d_end > 0:
         return None  # no crossing
 
+    def validated(jd: float) -> float | None:
+        lon1, speed1 = calc_planet(jd, pid1)
+        if natal_lon2 is not None:
+            lon2, speed2 = natal_lon2, 0.0
+        else:
+            lon2, speed2 = calc_planet(jd, pid2)  # type: ignore[arg-type]
+        residual = abs(angular_distance(lon1, lon2) - asp_angle)
+        # Convert the time tolerance to an angular tolerance. A signed-delta
+        # sign change alone can instead bracket the +/-180 degree branch cut.
+        angular_tolerance = max(1e-7, abs(speed1 - speed2) * tolerance)
+        return jd if residual <= angular_tolerance else None
+
     for _ in range(80):  # max iterations
         jd_mid = (jd_start + jd_end) / 2
-        if abs(jd_end - jd_start) < tolerance:
-            return jd_mid
         d_mid = diff_at(jd_mid)
+        if d_mid == 0:
+            return jd_mid
+        if abs(jd_end - jd_start) < tolerance or jd_mid in (jd_start, jd_end):
+            return validated(jd_mid)
         if d_start * d_mid <= 0:
             jd_end = jd_mid
-            d_end = d_mid
         else:
             jd_start = jd_mid
             d_start = d_mid
-    return (jd_start + jd_end) / 2
+    return validated((jd_start + jd_end) / 2)

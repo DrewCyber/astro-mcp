@@ -9,6 +9,7 @@ wrong answer whenever the Moon's degree number is the smaller of the pair.
 
 from __future__ import annotations
 
+from functools import cache
 from math import cos, radians
 from typing import Any
 
@@ -103,18 +104,24 @@ def _sign_boundary_jd(jd: float, forward: bool) -> float:
 
 def _aspect_times(jd_from: float, jd_to: float) -> list[float]:
     """Every Ptolemaic Moon-to-traditional-planet perfection in the window."""
+    # Every aspect/body scan visits the same grid. Reuse raw longitudes only
+    # within this window; keep exact-aspect refinement in the provider unchanged.
+    @cache
+    def longitude(at: float, pid: int) -> float:
+        return calc_planet(at, pid)[0]
+
     times: list[float] = []
     for body in VOC_BODIES:
         pid = PLANET_IDS[body]
         for angle in VOC_ASPECTS.values():
             jd = jd_from
             prev = aspect_delta(
-                calc_planet(jd, PLANET_IDS["Mo"])[0], calc_planet(jd, pid)[0], angle
+                longitude(jd, PLANET_IDS["Mo"]), longitude(jd, pid), angle
             )
             while jd < jd_to:
                 nxt = min(jd + _SCAN_STEP, jd_to)
                 delta = aspect_delta(
-                    calc_planet(nxt, PLANET_IDS["Mo"])[0], calc_planet(nxt, pid)[0], angle
+                    longitude(nxt, PLANET_IDS["Mo"]), longitude(nxt, pid), angle
                 )
                 if prev * delta < 0 and abs(prev - delta) < 180:
                     exact = find_exact_aspect_jd(
@@ -171,20 +178,26 @@ def next_lunations(jd: float) -> dict[str, dict[str, Any]]:
     wrong sign. Here ``sign``/``deg`` are the Moon's, and for a Full Moon
     ``sun_sign`` gives the opposite end of the axis.
     """
+    # New/Full scans overlap on the same grid. This cache is discarded when
+    # the operation returns and never rounds the Julian day or longitude.
+    @cache
+    def longitude(at: float, pid: int) -> float:
+        return calc_planet(at, pid)[0]
+
     out: dict[str, dict[str, Any]] = {}
     for name, angle in (("next_new", 0.0), ("next_full", 180.0)):
         at = jd
         prev = aspect_delta(
-            calc_planet(at, PLANET_IDS["Mo"])[0],
-            calc_planet(at, PLANET_IDS["Su"])[0],
+            longitude(at, PLANET_IDS["Mo"]),
+            longitude(at, PLANET_IDS["Su"]),
             angle,
         )
         end = jd + _LUNATION_SEARCH_DAYS
         while at < end:
             nxt = min(at + _SCAN_STEP, end)
             delta = aspect_delta(
-                calc_planet(nxt, PLANET_IDS["Mo"])[0],
-                calc_planet(nxt, PLANET_IDS["Su"])[0],
+                longitude(nxt, PLANET_IDS["Mo"]),
+                longitude(nxt, PLANET_IDS["Su"]),
                 angle,
             )
             if prev * delta < 0 and abs(prev - delta) < 180:

@@ -95,6 +95,53 @@ card). A prebuilt image is also published to GHCR on every release —
 instance, quick `cloudflared` tunnels, Google Cloud Run, Koyeb and
 troubleshooting, see **[DEPLOY.md](DEPLOY.md)**.
 
+### HTTP admission and header validation
+
+Local HTTP (`HOST=127.0.0.1`, or `localhost` / `::1`) uses the MCP SDK's
+Host/Origin guard automatically. Use an explicit port, e.g.
+`http://localhost:8080/mcp`: the SDK's automatic loopback patterns require a
+port. Foreign Host headers receive HTTP 421; disallowed Origins receive 403.
+Requests without an Origin header are allowed when their Host is allowed.
+
+Containers retain `HOST=0.0.0.0` and public, unauthenticated access by default;
+without explicit allowlists, the SDK does not apply the loopback header guard.
+For a deployed service, enable explicit validation with JSON lists:
+
+```bash
+export HOST=0.0.0.0
+export HTTP_ALLOWED_HOSTS='["myapp.onrender.com", "myapp.onrender.com:*"]'
+export HTTP_ALLOWED_ORIGINS='["https://your-browser-client.example"]'
+export HTTP_MAX_CONCURRENT_REQUESTS=16
+```
+
+Use the actual Host and browser Origin values reaching the service. Hosts have
+no scheme; Origins include the scheme and omit paths. The SDK supports a `:*`
+port suffix; include the bare hostname separately for standard-port traffic.
+Setting either list enables validation and replaces automatic defaults: an
+unset/empty hosts list denies all MCP requests, while an unset/empty origins
+list denies requests carrying Origin (requests without Origin still work).
+These are header checks, not CORS configuration or authentication.
+
+For local cloudflared tunnels, the foreign public Host is no longer implicitly
+accepted on a loopback binding. Set explicit allowlists for the tunnel hostname
+and expected Origins, then restart the server; update them when the tunnel URL
+changes. Alternatively `HOST=0.0.0.0` without allowlists retains public behavior,
+but also binds all network interfaces, so use appropriate network restrictions.
+
+At most `HTTP_MAX_CONCURRENT_REQUESTS` MCP HTTP exchanges (default **16**) are
+active per app/worker. Overflow gets **503** with **Retry-After: 2** immediately,
+without a waiting queue; clients should back off. Slots remain held through the
+whole response and are released on completion, errors or cancellation.
+`/health` bypasses admission and header validation. This limit does not bound
+proxy/socket queues, total request rate, or CPU execution time; synchronous
+calculations can still delay the event loop and health responses.
+
+No authentication or per-client quotas are introduced. Header allowlists do
+not identify clients and are not an abuse-prevention boundary. Private access
+and fair-use quotas remain optional deployment work (e.g. an authenticated
+proxy with deliberately configured trusted-proxy/client identity handling).
+Multiple workers or replicas each have their own admission limit.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -102,6 +149,9 @@ troubleshooting, see **[DEPLOY.md](DEPLOY.md)**.
 | `ASTRO_MCP_TRANSPORT` | `stdio` | `stdio` for local clients, `http` for remote streamable-HTTP (`/mcp`) |
 | `HOST` | `127.0.0.1` | Bind address for the HTTP transport (containers want `0.0.0.0`) |
 | `PORT` | `8080` | Port for the HTTP transport |
+| `HTTP_ALLOWED_HOSTS` | unset | Optional JSON list of allowed Host headers; enables SDK validation |
+| `HTTP_ALLOWED_ORIGINS` | unset | Optional JSON list of allowed Origin headers; enables SDK validation |
+| `HTTP_MAX_CONCURRENT_REQUESTS` | `16` | Positive per-worker active MCP request limit; overflow returns 503 without queueing |
 | `EPHE_PATH` | `./ephe` | Path to Swiss Ephemeris `.se1` data files |
 | `GEOCODING_PROVIDER` | `nominatim` | `nominatim` or `opencage` |
 | `OPENCAGE_API_KEY` | — | Required if `GEOCODING_PROVIDER=opencage` |

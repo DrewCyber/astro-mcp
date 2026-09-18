@@ -252,6 +252,8 @@ def calculate_transits(
         natal_points,
         custom_orbs=orbs,
         angle_orb_keys=set(ANGLE_KEYS),
+        cross_chart=True,
+        fixed_target=True,
     )
 
     # max_orb is a relevance cut, so it runs before the significance ranking:
@@ -271,7 +273,7 @@ def calculate_transits(
             "tp": asp.point1,
             "np": asp.point2,
             "asp": asp.aspect_type,
-            "orb": asp.orb,
+            "orb": round(asp.orb, 2),
             "apply": asp.applying,
             "sig": asp.significance,
             "exact": exact,
